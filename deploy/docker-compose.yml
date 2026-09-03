@@ -1,0 +1,42 @@
+version: "3.9"
+# =====================================================
+# 可选：Docker Compose 一键部署（不用 Docker 可忽略此文件）
+# 如需启用：
+#   1. 确保 backend/.env 与 qqbot/.env.prod 中的 BOT_API_TOKEN 一致
+#   2. docker compose up -d --build
+# =====================================================
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: ./backend/.env
+    volumes:
+      - ./backend/data:/app/data
+    ports:
+      - "8003:8003"
+    networks:
+      - lib-net
+
+  qqbot:
+    build:
+      context: ./qqbot
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: ./qqbot/.env.prod
+    environment:
+      # 容器网络内通过服务名访问 backend（覆盖 .env.prod 里的 127.0.0.1）
+      BACKEND_API_BASE: http://backend:8003
+    depends_on:
+      - backend
+    networks:
+      - lib-net
+    # onebot 反向 WS 由 bot 端对外，本容器只暴露 fastapi 端点
+    ports:
+      - "8083:8083"
+
+networks:
+  lib-net:
+    driver: bridge

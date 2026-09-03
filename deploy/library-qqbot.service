@@ -1,0 +1,24 @@
+[Unit]
+Description=群资源站 nonebot2 机器人 (qqbot/)
+After=network.target library-backend.service
+# 如果 backend 也在本机且启用了 systemd：
+# Wants=library-backend.service
+
+[Service]
+Type=simple
+# 按实际情况修改用户名/用户组
+User=jianying
+Group=jianying
+WorkingDirectory=/home/jianying/code/library/qqbot
+# 使用全局 nonebot 环境（~/venv/nb2）
+Environment="PATH=/home/jianying/venv/nb2/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/jianying/venv/nb2/bin/nb run
+Restart=on-failure
+RestartSec=5s
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=library-qqbot
+
+[Install]
+WantedBy=multi-user.target

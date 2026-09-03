@@ -1,0 +1,46 @@
+# ========== Python ==========
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.eggs/
+
+# ========== 虚拟环境（两个子工程都允许有本地 venv） ==========
+.venv/
+venv/
+env/
+ENV/
+
+# ========== IDE ==========
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ========== 前端依赖 ==========
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# ========== 本地环境变量（包含密钥，禁止入库） ==========
+.env
+.venv
+.env.local
+.env.*.local
+.env.prod
+
+# ========== 数据文件 ==========
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+*.log
+logs/
+# zfile 存储根（运行数据/大文件，不入库；works 下是小说/视频原件）
+files/

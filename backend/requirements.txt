@@ -1,0 +1,18 @@
+# 群图书馆网站 —— backend 依赖（MVP）
+# 建议：python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+
+fastapi>=0.110.0,<1.0
+uvicorn[standard]>=0.27.0,<1.0
+sqlalchemy>=2.0.0,<3.0
+pydantic>=2.5.0,<3.0
+pydantic-settings>=2.2.0,<3.0
+
+# 认证
+python-jose[cryptography]>=3.3.0
+# bcrypt 直接用（≥4.1 版本即可，不再依赖 passlib）
+bcrypt>=4.1.0
+python-multipart>=0.0.9
+
+# 工具
+python-dotenv>=1.0.0
+httpx>=0.27.0
