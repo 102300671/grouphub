@@ -26,25 +26,19 @@ async function loadUserWorks() {
     // 加载用户参与的作品
     const res = await authClient.userWorks();
     if (res.ok) {
-      // 转换数据格式以匹配 Work 类型
-      uploadedWorks.value = res.uploaded.map(w => ({
-        ...w,
-        cover_url: w.cover_url || undefined,
-        author: w.author || undefined,
-        updated_at: w.updated_at || undefined,
-      }));
-      supportedWorks.value = res.supported.map(w => ({
-        ...w,
-        cover_url: w.cover_url || undefined,
-        author: w.author || undefined,
-        updated_at: w.updated_at || undefined,
-      }));
-      recommendedWorks.value = res.recommended.map(w => ({
-        ...w,
-        cover_url: w.cover_url || undefined,
-        author: w.author || undefined,
-        updated_at: w.updated_at || undefined,
-      }));
+      const mapWork = (w: Record<string, unknown>): Work => ({
+        id: w.id as number,
+        title: w.title as string,
+        type: w.type as Work["type"],
+        cover_url: (w.cover_url as string) || null,
+        author: (w.author as string) || null,
+        tags: [],
+        created_at: (w.created_at as string) || "",
+        updated_at: (w.updated_at as string) || undefined,
+      });
+      uploadedWorks.value = res.uploaded.map(mapWork);
+      supportedWorks.value = res.supported.map(mapWork);
+      recommendedWorks.value = res.recommended.map(mapWork);
     }
   } catch (e) {
     errorMsg.value = extractErrMsg(e, "获取个人资料失败");

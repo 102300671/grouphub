@@ -5,6 +5,7 @@ export interface AuthUser {
   qq: string;
   nickname: string;
   role: UserRole;
+  avatar_url?: string | null;
   created_at?: string;
 }
 
