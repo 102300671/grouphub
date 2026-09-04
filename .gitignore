@@ -44,3 +44,5 @@ backend/data/
 logs/
 # zfile 存储根（运行数据/大文件，不入库；works 下是小说/视频原件）
 files/
+
+api_md/
