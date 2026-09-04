@@ -28,7 +28,7 @@
 | 端 | 技术 |
 | --- | --- |
 | 后端 | Python 3.12 · FastAPI · SQLAlchemy 2 · Pydantic 2 |
-| 数据库 | SQLite（`backend/data/library.db`，可平滑换 PostgreSQL） |
+| 数据库 | SQLite（`backend/data/grouphub.db`，可平滑换 PostgreSQL） |
 | 前端 | Vue 3 · TypeScript · Vite · Pinia · Vue Router |
 | 存储 | zfile（自建网盘，`http://localhost:8081`）+ 外站直链（代理拉取） |
 | 机器人 | nonebot2（出站 WebSocket，插件位于 `qqbot/plugins/`） |
@@ -49,7 +49,7 @@ grouphub/
 │   │   ├── schemas.py    # Pydantic 入参/出参
 │   │   ├── config.py     # .env 配置
 │   │   └── main.py
-│   ├── data/library.db   # SQLite（自动创建）
+│   ├── data/grouphub.db   # SQLite（自动创建）
 │   ├── .env.example      # 环境变量示例
 │   └── start.sh          # 开发启动（uvicorn --reload，:8003）
 ├── frontend/             # Vue3 前端（dev :5173）
@@ -111,7 +111,7 @@ pip install -e .          # 使用项目自带 .venv
 
 | 变量 | 说明 |
 | --- | --- |
-| `DATABASE_URL` | SQLite 路径，默认 `sqlite:///./data/library.db` |
+| `DATABASE_URL` | SQLite 路径，默认 `sqlite:///./data/grouphub.db` |
 | `JWT_SECRET_KEY` | 生产环境务必替换为随机长字符串 |
 | `ADMIN_QQS` | 管理员 QQ 白名单（逗号分隔），注册/登录自动赋 admin 角色 |
 | `SITE_NAME` | 站名，默认「群资源站」 |

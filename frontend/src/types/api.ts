@@ -20,7 +20,7 @@ export interface SimpleMessageOut {
   details?: Record<string, unknown>;
 }
 
-export type WorkType = "novel" | "anime" | "movie" | "comic" | "game" | "fanwork" | "other" | string;
+export type WorkType = "novel" | "anime" | "movie" | "gallery" | "fanwork" | "other" | string;
 export type ReadingStatus = "reading" | "completed" | "plan" | "pause" | "drop" | string;
 
 export interface Work {

@@ -52,6 +52,7 @@ class WorkType(str):
     NOVEL = "novel"       # 小说
     ANIME = "anime"       # 番剧/动漫
     MOVIE = "movie"       # 电影（按视频类作品处理，与番剧复用逻辑）
+    GALLERY = "gallery"   # 图/集（图集：多张图片，封面默认第一张，可指定任一张）
     FANWORK = "fanwork"   # 同人文（可关联原作或独立）
     OTHER = "other"
 

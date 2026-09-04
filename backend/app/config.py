@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """站点与鉴权配置。"""
 
     # 数据库
-    database_url: str = "sqlite:///./data/library.db"
+    database_url: str = "sqlite:///./data/grouphub.db"
 
     # JWT
     jwt_secret_key: str = "dev-only-change-me"

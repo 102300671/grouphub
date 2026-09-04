@@ -34,8 +34,10 @@ const scrollRef = ref<HTMLElement | null>(null);
 /** 番剧/动漫：文案用「集」替代「章」；电影：用「部」 */
 const isAnime = computed(() => work.value?.type === "anime");
 const isMovie = computed(() => work.value?.type === "movie");
-const unit = computed(() => (isAnime.value ? "集" : isMovie.value ? "部" : "章"));
-const unitPlural = computed(() => (isAnime.value ? "剧集" : isMovie.value ? "影片" : "章节"));
+/** 图集：以「张」计，逐张浏览图片 */
+const isGallery = computed(() => work.value?.type === "gallery");
+const unit = computed(() => (isGallery.value ? "张" : isAnime.value ? "集" : isMovie.value ? "部" : "章"));
+const unitPlural = computed(() => (isGallery.value ? "图片" : isAnime.value ? "剧集" : isMovie.value ? "影片" : "章节"));
 
 const textContent = ref("");
 const textLoading = ref(false);
@@ -203,7 +205,7 @@ onMounted(async () => {
             v-if="selectedDownloadUrl"
             :href="selectedDownloadUrl"
             class="btn btn-primary btn-sm sel-dl"
-          >⬇ 下载选{{ unit }}（{{ selected.size }}）</a>
+          >⬇ 下载{{ unit === "张" ? "选图" : "选" + unit }}（{{ selected.size }}）</a>
         </div>
         <ul class="chap-list">
           <li

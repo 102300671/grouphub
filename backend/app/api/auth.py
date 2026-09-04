@@ -322,3 +322,59 @@ def logout(_: models.User = Depends(get_current_user)):
 @router.get("/me")
 def me(user: models.User = Depends(get_current_user)) -> Dict[str, Any]:
     return _user_out(user)
+
+
+@router.get("/user-works")
+def get_user_works(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """获取当前用户参与的所有作品（作为上传者、支持者、推荐者）。"""
+    # 1. 作为上传者的作品
+    uploaded_works = (
+        db.query(models.Work)
+        .filter(models.Work.uploader_id == user.id)
+        .order_by(models.Work.updated_at.desc())
+        .all()
+    )
+    
+    # 2. 作为支持者的作品
+    supporter_works = (
+        db.query(models.Work)
+        .join(models.UserWork, models.UserWork.work_id == models.Work.id)
+        .filter(
+            models.UserWork.user_id == user.id,
+            models.UserWork.relation_roles.contains(["supporter"]),
+        )
+        .order_by(models.Work.updated_at.desc())
+        .all()
+    )
+    
+    # 3. 作为推荐者的作品
+    recommender_works = (
+        db.query(models.Work)
+        .join(models.UserWork, models.UserWork.work_id == models.Work.id)
+        .filter(
+            models.UserWork.user_id == user.id,
+            models.UserWork.relation_roles.contains(["recommender"]),
+        )
+        .order_by(models.Work.updated_at.desc())
+        .all()
+    )
+    
+    def _compact_work(w: models.Work) -> Dict[str, Any]:
+        return {
+            "id": w.id,
+            "title": w.title,
+            "type": w.type,
+            "author": w.author,
+            "cover_url": public_url(w.cover_url) if w.cover_url else None,
+            "updated_at": w.updated_at.isoformat() if w.updated_at else None,
+        }
+    
+    return {
+        "ok": True,
+        "uploaded": [_compact_work(w) for w in uploaded_works],
+        "supported": [_compact_work(w) for w in supporter_works],
+        "recommended": [_compact_work(w) for w in recommender_works],
+    }

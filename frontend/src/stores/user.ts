@@ -29,6 +29,11 @@ export const useUserStore = defineStore("user", () => {
     _apply(out);
   }
 
+  async function loginByCode(qq: string, code: string) {
+    const out = await authClient.confirmCode({ qq, code });
+    _apply(out);
+  }
+
   async function logout() {
     try {
       await authClient.logout();
@@ -71,6 +76,7 @@ export const useUserStore = defineStore("user", () => {
     role,
     login,
     register,
+    loginByCode,
     logout,
     ensureMe,
   };

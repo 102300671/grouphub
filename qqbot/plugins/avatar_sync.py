@@ -43,29 +43,26 @@ AVATAR_FETCH_INTERVAL = float(os.getenv("AVATAR_FETCH_INTERVAL", "0.3") or "0.3"
 # ------------------ 核心 ------------------
 
 async def _fetch_avatar_url(bot: Bot, group_id: str, qq: str) -> Optional[str]:
-    """调 adapter 拉单个群成员头像 URL；失败返回 None（不抛异常）。"""
-    is_onebot = "onebot" in type(bot).__name__.lower() or "onebot" in type(bot).__module__.lower()
+    """获取 QQ 头像 URL。OneBot v11 协议没有头像字段，使用标准 QQ 头像 URL。
+    
+    标准 QQ 头像 URL 格式：https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640
+    参数说明：
+      - b=qq: 表示 QQ 头像
+      - nk={qq}: QQ 号码
+      - s=640: 头像尺寸（640x640）
+    """
+    # 先尝试调用 API 确认用户是否在群中（权限检查）
     try:
-        if is_onebot:
-            info = await bot.call_api("get_group_member_info", group_id=int(group_id), user_id=int(qq))
+        if "onebot" in type(bot).__name__.lower() or "onebot" in type(bot).__module__.lower():
+            await bot.call_api("get_group_member_info", group_id=int(group_id), user_id=int(qq))
         else:
-            info = await bot.call_api("get_group_member_info", group_id=group_id, user_id=qq)
-    except TypeError:
-        # 部分 adapter 不接受 int
-        try:
-            info = await bot.call_api("get_group_member_info", group_id=group_id, user_id=qq)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug(f"[avatar_sync] get_group_member_info 失败：group={group_id} qq={qq} {exc}")
-            return None
+            await bot.call_api("get_group_member_info", group_id=group_id, user_id=qq)
     except Exception as exc:  # noqa: BLE001
-        logger.debug(f"[avatar_sync] get_group_member_info 失败：group={group_id} qq={qq} {exc}")
+        logger.debug(f"[avatar_sync] 用户不在群中或接口受限：group={group_id} qq={qq} {exc}")
         return None
-
-    if not info:
-        return None
-    d = info if isinstance(info, dict) else getattr(info, "model_dump", lambda: {})()
-    avatar = d.get("avatar") or d.get("avatar_url") or d.get("face_url")
-    return str(avatar) if avatar else None
+    
+    # 用户确认在群中，返回标准 QQ 头像 URL
+    return f"https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
 
 
 async def sync_avatars(bot: Bot, group_ids: Optional[List[str]] = None, limit: int = AVATAR_SYNC_BATCH_LIMIT) -> Dict[str, Any]:

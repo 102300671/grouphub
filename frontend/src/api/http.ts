@@ -109,4 +109,33 @@ export const authClient = {
   logout() {
     return request<SimpleMessageOut>({ url: "/auth/logout", method: "POST" });
   },
+  userWorks() {
+    return request<{
+      ok: boolean;
+      uploaded: Array<{
+        id: number;
+        title: string;
+        type: string;
+        author: string | null;
+        cover_url: string | null;
+        updated_at: string | null;
+      }>;
+      supported: Array<{
+        id: number;
+        title: string;
+        type: string;
+        author: string | null;
+        cover_url: string | null;
+        updated_at: string | null;
+      }>;
+      recommended: Array<{
+        id: number;
+        title: string;
+        type: string;
+        author: string | null;
+        cover_url: string | null;
+        updated_at: string | null;
+      }>;
+    }>({ url: "/auth/user-works", method: "GET" });
+  },
 };

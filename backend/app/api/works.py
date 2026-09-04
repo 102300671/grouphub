@@ -362,6 +362,9 @@ def _upload_one_work_file(
     )
     db.add(ef)
     db.flush()
+    # 图集：首张图片自动作为封面（可后续在详情页指定任一张为封面）
+    if w.type == models.WorkType.GALLERY and not w.cover_url:
+        w.cover_url = url
     return ef
 
 
@@ -447,6 +450,26 @@ def delete_work_file(
     return {"ok": True}
 
 
+@router.post("/{work_id}/files/{file_id}/set-cover")
+def set_work_file_cover(
+    work_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    me: models.User = Depends(get_current_user),
+):
+    """把作品的某个文件（图集任一张图）设为封面。权限：上传者本人或管理员。"""
+    w = db.query(models.Work).filter(models.Work.id == work_id).first()
+    if w is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
+    if not _can_manage_work(w, me):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改他人作品封面")
+
+    ef = _ef_or_404(db, work_id, file_id)
+    w.cover_url = ef.url
+    db.commit()
+    return {"ok": True, "cover_url": public_url(ef.url), "file_name": ef.file_name}
+
+
 # ------------------- 外站直链添加（provider=url） -------------------
 
 def _meta_from_url(url: str) -> Dict[str, Optional[str]]:
@@ -528,6 +551,9 @@ def add_work_file_url(
         uploader_id=me.id,
     )
     db.add(ef)
+    # 图集：第一条直链图片自动作为封面（可后续在详情页指定任一张为封面）
+    if w.type == models.WorkType.GALLERY and not w.cover_url:
+        w.cover_url = url
     db.commit()
     db.refresh(ef)
     return {"ok": True, "file": _file_out(ef)}

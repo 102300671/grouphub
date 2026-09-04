@@ -114,6 +114,13 @@ export const worksClient = {
   removeFile(id: string | number, fileId: number) {
     return request<{ ok: boolean }>({ url: `/works/${id}/files/${fileId}`, method: "DELETE" });
   },
+  /** 把某个文件设为作品封面（图集任一张图；权限同上传者/管理员） */
+  async setCover(id: string | number, fileId: number) {
+    return request<{ ok: boolean; cover_url: string }>({
+      url: `/works/${id}/files/${fileId}/set-cover`,
+      method: "POST",
+    });
+  },
   /** 章节列表（单文件文本 = 文内切章；多文件 = 每文件一章） */
   chapters(id: string | number) {
     return request<WorkChaptersResponse>({ url: `/works/${id}/chapters`, method: "GET" });

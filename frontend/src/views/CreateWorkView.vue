@@ -80,6 +80,7 @@ const TYPE_OPTIONS = [
   { value: "novel", label: "小说" },
   { value: "anime", label: "番剧/动漫" },
   { value: "movie", label: "电影" },
+  { value: "gallery", label: "图集" },
   { value: "fanwork", label: "同人文" },
   { value: "other", label: "其他" },
 ];
@@ -90,6 +91,7 @@ const typeLabel = computed(() => TYPE_OPTIONS.find(t => t.value === type.value)?
 const directUrlPlaceholder = computed(() => {
   if (type.value === "novel") return "https://.../example.txt";
   if (type.value === "anime" || type.value === "movie") return "https://.../example.mp4";
+  if (type.value === "gallery") return "https://.../example.jpg";
   return "https://.../example.pdf";
 });
 
@@ -279,7 +281,9 @@ async function submit() {
             ? "连载剧集批量上传（可选，可多选；上传后按顺序作为第 1~N 集在线观看）"
             : type === "movie"
               ? "电影文件批量上传（可选，可多选；上传后按顺序作为第 1~N 部/个视频在线观看）"
-              : "连载章节批量上传（可选，可多选；上传后按顺序作为第 1~N 章在线阅读）" }}
+              : type === "gallery"
+                ? "图集图片批量上传（可选，可多选；上传后按顺序作为第 1~N 张在线浏览；第一张自动作为封面）"
+                : "连载章节批量上传（可选，可多选；上传后按顺序作为第 1~N 章在线阅读）" }}
         </label>
         <input ref="batchFileInput" type="file" multiple @change="onBatchSelect" style="width: 100%;" />
         <div v-if="batchFiles.length" style="margin-top: 0.5rem; display: flex; flex-direction: column; gap: 4px;">

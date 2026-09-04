@@ -164,6 +164,27 @@ async function removeFile(f: WorkFile) {
   }
 }
 
+// 图集封面：未设封面时兜底用第一张图；可在文件管理手动指定任一张为封面
+const galleryCover = computed(() => {
+  if (!work.value) return "";
+  if (work.value.cover_url) return work.value.cover_url;
+  if (isGallery.value) {
+    const first = work.value.external_files?.[0];
+    if (first && (first.mime_type || "").startsWith("image")) return first.url;
+  }
+  return "";
+});
+
+async function setAsCover(f: WorkFile) {
+  if (!work.value) return;
+  try {
+    await worksClient.setCover(work.value.id, f.id);
+    await load();
+  } catch (e) {
+    window.alert(extractErrMsg(e, "设为封面失败"));
+  }
+}
+
 // ------------------- 章节化：作品页只预览第一章，完整阅读跳新标签页 -------------------
 const chapterMode = ref<"split" | "file">("file");
 const chapters = ref<WorkChapter[]>([]);
@@ -172,6 +193,8 @@ const chapters = ref<WorkChapter[]>([]);
 const isAnime = computed(() => work.value?.type === "anime");
 /** 电影：文案用「观看 / 下载」替代章节 */
 const isMovie = computed(() => (work.value?.type ?? "") === "movie");
+/** 图集：文案用「浏览图集」，封面默认第一张，可在文件管理里指定任一张 */
+const isGallery = computed(() => (work.value?.type ?? "") === "gallery");
 
 const firstChap = computed<WorkChapter | null>(() => chapters.value[0] ?? null);
 const activeFile = computed<WorkFile | null>(() => {
@@ -262,6 +285,7 @@ const TYPE_LABELS: Record<string, string> = {
   novel: "小说",
   anime: "动画",
   fanwork: "同人",
+  gallery: "图集",
   comic: "漫画",
   game: "游戏",
   other: "其他",
@@ -373,7 +397,7 @@ onMounted(load);
       <header class="head">
         <!-- 封面图：有封面 URL 用真实图，否则退回首字母色块 -->
         <div class="cover-wrap">
-          <img v-if="work.cover_url" class="cover cover-img" :src="work.cover_url" :alt="work.title" />
+          <img v-if="galleryCover" class="cover cover-img" :src="galleryCover" :alt="work.title" />
           <div v-else class="cover">{{ work.title.slice(0, 1) }}</div>
           <div v-if="canManage" style="margin-top: 8px;">
             <label class="btn btn-ghost btn-sm" style="width: 100%; display: inline-block; text-align: center; cursor: pointer;">
@@ -451,7 +475,7 @@ onMounted(load);
 
       <!-- 阅读/观看关系 -->
       <section v-if="work.relations" class="rels">
-        <h3>{{ isAnime || isMovie ? "观看关系" : "阅读关系" }}</h3>
+        <h3>{{ isAnime || isMovie || isGallery ? "观看关系" : "阅读关系" }}</h3>
         <div class="rel-stat">
           <div>
             <div class="stat-num">{{ work.relations.supporter_count }}</div>
@@ -462,7 +486,7 @@ onMounted(load);
             <div class="muted text-sm">推荐者{{ work.relations.show_recommenders ? "（名单已展开）" : "（达到阈值后展开）" }}</div>
           </div>
           <div>
-            <div class="muted text-sm">{{ isAnime || isMovie ? "观看分布" : "阅读分布" }}</div>
+            <div class="muted text-sm">{{ isAnime || isMovie || isGallery ? "观看分布" : "阅读分布" }}</div>
             <ul class="stat-list">
               <li v-for="(v, k) in work.relations.reading_stats" :key="k">
                 <span>{{ k }}</span><b>{{ v }}</b>
@@ -509,11 +533,12 @@ onMounted(load);
                 <template v-if="chapterMode === 'split'">📖 预览：第 {{ firstChap.index + 1 }} 章 · {{ firstChap.title }}</template>
                 <template v-else-if="isAnime">📺 预览：第 {{ firstChap.index + 1 }} 集 · {{ firstChap.file_name }}</template>
                 <template v-else-if="isMovie">🎬 预览：{{ firstChap.file_name }}</template>
+                <template v-else-if="isGallery">🖼 预览：第 {{ firstChap.index + 1 }} 张 · {{ firstChap.file_name }}</template>
                 <template v-else>📖 预览：第一文件 · {{ firstChap.file_name }}</template>
               </h4>
               <div class="row" style="gap: 6px; flex-wrap: wrap;">
                 <a :href="readerUrl" target="_blank" rel="noreferrer" class="btn btn-ghost btn-sm">
-                  {{ isAnime ? "观看 / 选集下载" : isMovie ? "观看 / 下载" : "阅读 / 选章下载" }}
+                  {{ isAnime ? "观看 / 选集下载" : isMovie ? "观看 / 下载" : isGallery ? "浏览图集 / 打包下载" : "阅读 / 选章下载" }}
                 </a>
                 <a
                   v-for="l in work.links ?? []"
@@ -522,7 +547,7 @@ onMounted(load);
                   target="_blank"
                   rel="noreferrer"
                   class="btn btn-ghost btn-sm"
-                >{{ isAnime || isMovie ? "站外观看" : "站外阅读" }}：{{ l.site_name || l.url }}</a>
+                >{{ isAnime || isMovie || isGallery ? "站外观看" : "站外阅读" }}：{{ l.site_name || l.url }}</a>
               </div>
             </div>
             <template v-if="chapterMode === 'split'">
@@ -554,6 +579,7 @@ onMounted(load);
               </div>
               <div class="row" style="gap: 6px;">
                 <a class="btn btn-ghost btn-sm" :href="f.url" :download="f.file_name || undefined" target="_blank" rel="noreferrer">⬇ 直链</a>
+                <button v-if="isGallery" class="btn btn-ghost btn-sm" @click="setAsCover(f)">设为封面</button>
                 <button class="btn btn-danger btn-sm" @click="removeFile(f)">删除</button>
               </div>
             </li>
@@ -569,7 +595,9 @@ onMounted(load);
               ? "每文件 = 一集，上传顺序即集数顺序"
               : isMovie
                 ? "每文件 = 一部/个视频，上传先后即排列顺序"
-                : "连载每文件 = 一章，上传顺序即章节顺序"
+                : isGallery
+                  ? "每文件 = 一张图，上传顺序即浏览顺序，第一张自动作封面"
+                  : "连载每文件 = 一章，上传顺序即章节顺序"
           }}）
         </h3>
         <div class="row" style="gap: 0.75rem; align-items: center; flex-wrap: wrap;">
@@ -594,7 +622,10 @@ onMounted(load);
             {{ addingDirect ? "添加中..." : "直链添加" }}
           </button>
         </div>
-        <p v-if="isAnime" class="muted text-sm" style="margin-top: 12px;">
+        <p v-if="isGallery" class="muted text-sm" style="margin-top: 12px;">
+          <b>图集说明：</b>每个文件一张图，按上传先后排浏览顺序；第一张自动作为封面，也可在「文件管理」里把任一张设为封面。下载整本：单文件 = 原图；多文件 = 打包为一个 ZIP。选图下载（在浏览页勾选）= 把所选图片打包下载。
+        </p>
+        <p v-else-if="isAnime" class="muted text-sm" style="margin-top: 12px;">
           <b>剧集说明：</b>每个文件一集，按上传先后排集序（第一集 = 第一个文件），可分次追加上传。下载整本：单文件 = 原文件；多文件 = 打包为一个 ZIP。选集下载（在观看页勾选）= 把所选集打包下载。
         </p>
         <p v-else-if="isMovie" class="muted text-sm" style="margin-top: 12px;">

@@ -15,6 +15,7 @@ const TYPE_OPTIONS = [
   { value: "novel", label: "小说" },
   { value: "anime", label: "番剧/动漫" },
   { value: "movie", label: "电影" },
+  { value: "gallery", label: "图集" },
   { value: "fanwork", label: "同人文" },
   { value: "other", label: "其他" },
 ];
