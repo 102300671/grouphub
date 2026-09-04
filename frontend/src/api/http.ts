@@ -1,8 +1,8 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 import type { AuthTokenOut, SimpleMessageOut } from "@/types/api";
 
-const TOKEN_KEY = "library.access_token";
-const USER_KEY = "library.current_user";
+const TOKEN_KEY = "grouphub.access_token";
+const USER_KEY = "grouphub.current_user";
 
 /** 读取环境变量里的 API 基址；默认 /api（配合 vite.config.ts 代理到 backend）。 */
 export const apiBase = (import.meta.env.VITE_API_BASE || "/api").replace(/\/$/, "");

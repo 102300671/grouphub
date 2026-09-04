@@ -3,7 +3,7 @@
 用法（在 backend 目录下执行即可，自动使用 backend/.venv）：
 
     # 方案 A：用 backend 虚拟环境跑（推荐）
-    cd /home/jianying/code/library/backend
+    cd <项目根>/backend
     .venv/bin/python scripts/make_admin.py <QQ号> [QQ号2 ...]
 
     # 方案 B：撤销管理员（降回 member，前提是不能是最后一个 admin）

@@ -21,7 +21,8 @@ from app import models, schemas
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.security import get_current_user, get_current_user_optional
-from app.zfile_client import COVER_EXTS, ZFilePath, UploadGuardError, ZFileError, get_zfile, validate_upload
+from app.zfile_client import COVER_EXTS, ZFilePath, UploadGuardError, ZFileError, validate_upload
+from app.storage import get_storage
 
 router = APIRouter(tags=["同人创作"])
 
@@ -247,8 +248,8 @@ def upload_fanwork_cover(
     ext = Path(file_name).suffix.lower() or ".jpg"
     zpath = ZFilePath.general("cover", me.qq, f"fanwork_{fanwork_id}{ext}")
     try:
-        zf = get_zfile()
-        url = zf.upload_file(file_name, file_content, path=zpath)
+        storage = get_storage()
+        url = storage.upload_file(file_name, file_content, path=zpath)
     except ZFileError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"zfile 上传失败: {e.msg}")
     except Exception as e:

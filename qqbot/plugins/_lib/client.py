@@ -41,7 +41,7 @@ class BackendClient(httpx.AsyncClient):
     def __init__(self) -> None:
         headers = {
             "X-Bot-Token": BOT_API_TOKEN,
-            "User-Agent": "library-qqbot-bot/0.1-mvp",
+            "User-Agent": "grouphub-qqbot-bot/0.1",
         }
         super().__init__(
             base_url=BACKEND_API_BASE,

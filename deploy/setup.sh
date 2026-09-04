@@ -7,7 +7,7 @@
 #   3. 可选：复制 deploy/*.service → /etc/systemd/system/（需 sudo，脚本末尾会打印提示）
 #
 # 用法：
-#   cd /home/jianying/code/library
+#   cd /path/to/grouphub
 #   bash deploy/setup.sh
 # ================================================================
 
@@ -97,8 +97,8 @@ echo "  - backend 启动脚本：$BACKEND_DIR/start.sh  (它会自动激活 .ven
 echo "  - qqbot   启动方式：source $NB_VENV/bin/activate && cd $QQBOT_DIR && nb run"
 echo
 echo "  如需 systemd 管理，执行（按需替换 service 文件里的 User/Group）："
-echo "      sudo cp $ROOT_DIR/deploy/library-backend.service  /etc/systemd/system/"
-echo "      sudo cp $ROOT_DIR/deploy/library-qqbot.service    /etc/systemd/system/"
+echo "      sudo cp $ROOT_DIR/deploy/grouphub-backend.service  /etc/systemd/system/"
+echo "      sudo cp $ROOT_DIR/deploy/grouphub-qqbot.service    /etc/systemd/system/"
 echo "      sudo systemctl daemon-reload"
-echo "      sudo systemctl enable --now library-backend library-qqbot"
+echo "      sudo systemctl enable --now grouphub-backend grouphub-qqbot"
 echo "========================================================"

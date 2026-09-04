@@ -10,6 +10,25 @@ export default defineConfig(({ mode }) => {
   const backendTarget = env.VITE_BACKEND_TARGET || DEFAULT_BACKEND;
   const base = env.VITE_PUBLIC_PATH || "/";
 
+  // 代理配置（dev 和 preview 共用）
+  const proxyConfig = {
+    "/api": {
+      target: backendTarget,
+      changeOrigin: true,
+      rewrite: (p: string) => p.replace(/^\/api/, ""),
+    },
+    "/zfile": {
+      target: env.VITE_ZFILE_TARGET || "http://127.0.0.1:8081",
+      changeOrigin: true,
+      rewrite: (p: string) => p.replace(/^\/zfile/, ""),
+    },
+    "/alist": {
+      target: env.VITE_ALIST_TARGET || "http://127.0.0.1:5244",
+      changeOrigin: true,
+      rewrite: (p: string) => p.replace(/^\/alist/, ""),
+    },
+  };
+
   return {
     base,
     plugins: [vue()],
@@ -21,26 +40,16 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "0.0.0.0",
       port: 5173,
-      // 允许任意 Host：内网穿透（ngrok / natapp 等）域名不固定，直接放行 dev 模式
       allowedHosts: true,
-      proxy: {
-        // 把前端所有 /api/* 请求代理到 backend
-        "/api": {
-          target: backendTarget,
-          changeOrigin: true,
-          rewrite: (p) => {
-            // 真实 backend 路由不带 /api 前缀，这里统一去掉
-            return p.replace(/^\/api/, "");
-          },
-        },
-        // zfile 直链代理：后端把 DB 里的 zfile 绝对 URL 改写为 /zfile/...，
-        // 这里转发到本机 zfile。这样内网穿透只需暴露前端端口。
-        "/zfile": {
-          target: env.VITE_ZFILE_TARGET || "http://127.0.0.1:8081",
-          changeOrigin: true,
-          rewrite: (p) => p.replace(/^\/zfile/, ""),
-        },
-      },
+      proxy: proxyConfig,
+    },
+    // 生产预览：npm run build && npm run preview
+    // 支持相同的环境变量覆盖代理目标（适配 Tailscale 跨网络场景）
+    preview: {
+      host: "0.0.0.0",
+      port: 4173,
+      allowedHosts: true,
+      proxy: proxyConfig,
     },
     build: {
       outDir: "dist",

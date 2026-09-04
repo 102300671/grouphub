@@ -134,7 +134,7 @@ def _sync_one_avatar(db: Session, qq: str, remote_url: str) -> dict:
 
     返回 {"qq", "ok", "avatar_url", "error"}。下载/上传失败不抛异常，记 error 后由上层汇总。
     """
-    from app.zfile_client import get_zfile
+    from app.storage import get_storage
 
     try:
         import httpx
@@ -155,7 +155,7 @@ def _sync_one_avatar(db: Session, qq: str, remote_url: str) -> dict:
     if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
         ext = "jpg"
     try:
-        zfile_url = get_zfile().upload_file(f"{qq}.{ext}", content, path="/avatars")
+        zfile_url = get_storage().upload_file(f"{qq}.{ext}", content, path="/avatars")
     except Exception as exc:  # noqa: BLE001
         return {"qq": qq, "ok": False, "avatar_url": None, "error": f"zfile upload failed: {exc}"}
 

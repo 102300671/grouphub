@@ -8,9 +8,7 @@
   - SUPERUSER /sync_avatar：手动触发全量同步（补历史数据用）
   后端负责：下载头像 → 转存 zfile /avatars/ → 写 group_members / users
 
-适配器兼容：
-  - OneBotV11：get_group_member_info(group_id, user_id) → {"avatar": "https://q.qlogo.cn/..."}
-  - QQ 官方：尽力调用同名字段；拿不到则跳过（不阻断其他成员）。
+适配器：OneBot v11
 """
 from __future__ import annotations
 
@@ -43,25 +41,16 @@ AVATAR_FETCH_INTERVAL = float(os.getenv("AVATAR_FETCH_INTERVAL", "0.3") or "0.3"
 # ------------------ 核心 ------------------
 
 async def _fetch_avatar_url(bot: Bot, group_id: str, qq: str) -> Optional[str]:
-    """获取 QQ 头像 URL。OneBot v11 协议没有头像字段，使用标准 QQ 头像 URL。
-    
-    标准 QQ 头像 URL 格式：https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640
-    参数说明：
-      - b=qq: 表示 QQ 头像
-      - nk={qq}: QQ 号码
-      - s=640: 头像尺寸（640x640）
+    """获取 QQ 头像 URL。
+
+    先调 get_group_member_info 确认用户是否在群中（权限检查），
+    确认后返回标准 QQ 头像 URL：https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640
     """
-    # 先尝试调用 API 确认用户是否在群中（权限检查）
     try:
-        if "onebot" in type(bot).__name__.lower() or "onebot" in type(bot).__module__.lower():
-            await bot.call_api("get_group_member_info", group_id=int(group_id), user_id=int(qq))
-        else:
-            await bot.call_api("get_group_member_info", group_id=group_id, user_id=qq)
+        await bot.call_api("get_group_member_info", group_id=int(group_id), user_id=int(qq))
     except Exception as exc:  # noqa: BLE001
         logger.debug(f"[avatar_sync] 用户不在群中或接口受限：group={group_id} qq={qq} {exc}")
         return None
-    
-    # 用户确认在群中，返回标准 QQ 头像 URL
     return f"https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
 
 
@@ -197,16 +186,11 @@ _member_notice = on_notice(block=False)
 
 @_member_notice.handle()
 async def _handle_increase_for_avatar(bot: Bot, event: Event):
+    """OneBot v11：进群事件触发头像同步（fire-and-forget）。"""
     notice_type = getattr(event, "notice_type", None)
-    event_name = getattr(event, "event_name", None)
-    is_increase = (
-        notice_type == "group_member_increase"
-        or (event_name and "increase" in event_name)
-        or "Increase" in type(event).__name__
-    )
-    if not is_increase:
+    if notice_type != "group_member_increase":
         return
-    group_id = getattr(event, "group_id", None) or getattr(getattr(event, "group", None), "group_id", None)
+    group_id = getattr(event, "group_id", None)
     user_id = getattr(event, "user_id", None) or getattr(getattr(event, "user", None), "id", None)
     if not group_id or not user_id:
         return

@@ -16,9 +16,9 @@ from app.zfile_client import (
     UploadGuardError,
     ZFileError,
     ZFilePath,
-    get_zfile,
     validate_upload,
 )
+from app.storage import get_storage
 
 router = APIRouter(tags=["评论"])
 
@@ -129,8 +129,8 @@ def upload_review_attachment(
 
     zpath = ZFilePath.general_dir("review", me.qq)
     try:
-        zf = get_zfile()
-        url = zf.upload_file(file_name, file_content, path=zpath)
+        storage = get_storage()
+        url = storage.upload_file(file_name, file_content, path=zpath)
     except ZFileError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"zfile 上传失败: {e.msg}")
     except Exception as e:

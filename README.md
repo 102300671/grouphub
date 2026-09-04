@@ -66,7 +66,6 @@ grouphub/
 ├── deploy/               # setup.sh 一键部署 + systemd + docker-compose
 ├── docs/                 # PRD 文档
 ├── files/                # zfile 存储根（works/novel、works/movie 等）
-└── zfile-api-example/    # zfile 拉直链 API 示例
 ```
 
 ---
@@ -118,7 +117,7 @@ pip install -e .          # 使用项目自带 .venv
 | `MAX_UPLOAD_MB` | 封面/附件/通用上传上限，默认 32MB |
 | `MAX_WORK_UPLOAD_MB` | 作品文件（小说/番剧/电影）上限，默认 4096MB（注意 zfile 后台自身限制） |
 | `ZFILE_BASE_URL` | zfile 地址，默认 `http://localhost:8081` |
-| `ZFILE_STORAGE_KEY` | zfile 存储 key（如 `library`） |
+| `ZFILE_STORAGE_KEY` | zfile 存储 key（如 `grouphub`） |
 | `ZFILE_PUBLIC_PREFIX` | 直链同源改写前缀，默认 `/zfile`（配合 nginx/vite 代理） |
 | `QQBOT_API_BASE` | bot HTTP 服务地址（:8083） |
 | `HOST` / `PORT` | 监听地址，默认 `0.0.0.0:8003` |

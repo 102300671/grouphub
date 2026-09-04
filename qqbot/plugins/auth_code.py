@@ -23,6 +23,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from nonebot import get_bots, get_driver, logger
+from nonebot.adapters import Bot
 
 _ENV_PATH = Path(__file__).resolve().parents[1] / ".env.prod"
 if _ENV_PATH.exists():
@@ -42,18 +43,9 @@ def _find_bot():
     return next(iter(bots.values()))
 
 
-async def _send_private(bot: Any, qq: str, message: str) -> None:
-    """跨适配器发私聊：OneBotV11 走 call_api，其余尝试高层方法。"""
-    is_onebot = "onebot" in type(bot).__name__.lower() or "onebot" in type(bot).__module__.lower()
-    if is_onebot:
-        await bot.call_api("send_private_msg", user_id=int(qq) if qq.isdigit() else qq, message=message)
-        return
-    send_fn = getattr(bot, "send_private_msg", None)
-    if send_fn is not None:
-        await send_fn(user_id=qq, message=message)
-        return
-    # 最后兜底：通用 call_api
-    await bot.call_api("send_private_msg", user_id=qq, message=message)
+async def _send_private(bot: Bot, qq: str, message: str) -> None:
+    """OneBot v11 发私聊。"""
+    await bot.call_api("send_private_msg", user_id=int(qq) if qq.isdigit() else qq, message=message)
 
 
 def _register_routes() -> bool:

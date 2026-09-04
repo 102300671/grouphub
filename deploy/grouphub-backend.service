@@ -7,16 +7,16 @@ Type=simple
 # 按实际情况修改用户名/用户组
 User=jianying
 Group=jianying
-WorkingDirectory=/home/jianying/code/library/backend
+WorkingDirectory=/home/jianying/code/grouphub/backend
 # 项目自建 venv
-Environment="PATH=/home/jianying/code/library/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/jianying/code/library/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8003
+Environment="PATH=/home/jianying/code/grouphub/backend/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/jianying/code/grouphub/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8003
 Restart=on-failure
 RestartSec=3s
 # 日志
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=library-backend
+SyslogIdentifier=grouphub-backend
 
 [Install]
 WantedBy=multi-user.target

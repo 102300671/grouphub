@@ -18,7 +18,7 @@ services:
     ports:
       - "8003:8003"
     networks:
-      - lib-net
+      - gh-net
 
   qqbot:
     build:
@@ -32,11 +32,11 @@ services:
     depends_on:
       - backend
     networks:
-      - lib-net
+      - gh-net
     # onebot 反向 WS 由 bot 端对外，本容器只暴露 fastapi 端点
     ports:
       - "8083:8083"
 
 networks:
-  lib-net:
+  gh-net:
     driver: bridge

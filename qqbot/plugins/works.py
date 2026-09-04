@@ -37,12 +37,8 @@ def _cmd_args(event: Event, prefixes: List[str]) -> str:
 
 
 def _sender_qq(event: Event) -> str:
-    qq = (
-        getattr(event, "user_id", None)
-        or getattr(getattr(event, "user", None), "id", None)
-        or getattr(getattr(event, "user", None), "tiny_id", None)
-        or getattr(getattr(event, "user", None), "openid", None)
-    )
+    """OneBot v11：从 event.user_id 或 event.user.id 取 QQ。"""
+    qq = getattr(event, "user_id", None) or getattr(getattr(event, "user", None), "id", None)
     return str(qq) if qq else ""
 
 

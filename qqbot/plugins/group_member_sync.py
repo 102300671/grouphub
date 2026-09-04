@@ -5,22 +5,17 @@
   - 监听进群/退群事件：upsert_one / set_inactive
   - 命令行（管理员）：`/sync_member <group_id|all>` 手动触发一次全量重同步
 
-适配器兼容策略（MVP 阶段对两种主流适配器做事件映射）：
-  - OneBotV11（nonebot-adapter-onebot）：
-      进群  = notice.group_member_increase
-      退群  = notice.group_member_decrease
-      名片 = notice.group_card（部分实现）
-  - QQ 官方 Bot（nonebot-adapters-qq）：
-      进群  = GroupMemberIncreaseEvent
-      退群  = GroupMemberDecreaseEvent
-    （QQ 官方开放平台事件名以 nonebot-adapters-qq 为准；如没有对应事件，仍可靠全量同步兜底）
+适配器：OneBot v11
+  - 进群 = notice.group_member_increase
+  - 退群 = notice.group_member_decrease
+  - 名片 = notice.group_card（部分实现）
 """
 from __future__ import annotations
 
 import asyncio
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -51,65 +46,27 @@ def _parse_groups_arg(group_ids: Optional[str]) -> List[str]:
     return [g.strip() for g in group_ids.split(",") if g.strip()]
 
 
-# ------------------ 通用：把「某 adapter 的某条群成员」归一化 ------------------
+# ------------------ 群成员归一化 ------------------
 
 def _normalize_member(raw: Dict[str, Any]) -> Dict[str, str]:
-    """
-    接收 adapter 返回的群成员对象（dict），抽取：
-      - qq：用户的 ID（OneBotV11 是 user_id，QQ 官方是 tiny_id/member_openid... 这里按场景做兼容）
-      - nickname_in_group：群名片 / 昵称
-    插件侧和站点都把 qq 当成字符串，避免数字精度问题。
-    """
-    qq = (
-        raw.get("user_id")
-        or raw.get("tiny_id")
-        or raw.get("member_openid")
-        or raw.get("openid")
-        or raw.get("id")
-        or raw.get("user_openid")
-    )
-    nickname = (
-        raw.get("card")
-        or raw.get("nickname")
-        or raw.get("nick")
-        or raw.get("member_name")
-        or raw.get("user_name")
-    )
+    """OneBot v11 群成员归一化：提取 user_id（作为 qq）和 card/nickname。"""
+    qq = raw.get("user_id")
+    nickname = raw.get("card") or raw.get("nickname")
     return {"qq": str(qq) if qq else "", "nickname_in_group": str(nickname) if nickname else None}
 
 
 # ------------------ 全量同步（对某 bot + 某 group） ------------------
 
 async def _fetch_group_member_list(bot: Bot, group_id: str) -> List[Dict[str, str]]:
-    """调用 bot 对应适配器的「获取群成员列表」接口。
-
-    - OneBotV11：get_group_member_list(group_id=group_id)
-    - QQ 官方：目前适配器没有统一 list 接口，此处按常见实现试调用 `get_group_members`；
-      如果失败则返回空列表，由 batch_upsert 的 mark_inactive_others=false 选项来避免误清。
-    """
-    adapter_name = type(bot).__name__.lower()
-    adapter_module = type(bot).__module__.lower()  # 例如 'nonebot.adapters.onebot.v11.bot'
-    is_onebot = "onebot" in adapter_name or "onebot" in adapter_module
-    members_raw: Iterable[Any] = []
-
+    """OneBot v11：get_group_member_list(group_id) 返回 list[dict]，无分页。"""
     try:
-        if is_onebot:
-            # onebot 的返回是 list[dict]，无分页
-            members_raw = await bot.call_api("get_group_member_list", group_id=group_id) or []
-        else:
-            # 其它适配器（QQ 官方等）：尽力调用；若没暴露 API，退化为空
-            try:
-                members_raw = await bot.get_group_members(group_id=group_id) or []  # type: ignore[attr-defined]
-            except Exception as exc:  # noqa: BLE001
-                logger.debug(f"[{adapter_name}] 未暴露 get_group_members: {exc}")
-                members_raw = []
+        members_raw = await bot.call_api("get_group_member_list", group_id=group_id) or []
     except Exception as exc:  # noqa: BLE001
         logger.error(f"获取群成员列表失败：bot={bot.self_id} group={group_id}: {exc}")
         return []
 
     normalized: List[Dict[str, str]] = []
     for m in members_raw:
-        # 不同适配器返回可能是对象也可能是 dict
         d = m if isinstance(m, dict) else getattr(m, "model_dump", lambda: {})()
         info = _normalize_member(d)
         if info["qq"]:
@@ -234,66 +191,38 @@ async def _set_inactive(group_id: str, qq: str) -> bool:
 
 
 # ------------------ 事件：进群 / 退群 ------------------
-# 用 on_notice 通吃；在 handler 内部按 event type/event_name 做分发，避免依赖具体 adapter。
+# OneBot v11 进群/退群事件：on_notice 捕获，handler 内按 notice_type 分发
 
 _member_notice = on_notice(block=False)
 
 
 @_member_notice.handle()
 async def _handle_member_change(bot: Bot, event: Event):
-    """统一分发：进群 → upsert；退群 → set_inactive。"""
-    event_class = type(event).__name__
-    event_name = getattr(event, "event_name", None)  # OneBotV11 有 event_name
+    """OneBot v11：进群 → upsert；退群 → set_inactive。"""
     notice_type = getattr(event, "notice_type", None)
-    sub_type = getattr(event, "sub_type", None) or getattr(event, "change_type", None)
-    group_id = (
-        getattr(event, "group_id", None)
-        or getattr(getattr(event, "group", None), "group_id", None)
-    )
-    user_id = (
-        getattr(event, "user_id", None)
-        or getattr(event, "operator_id", None)
-        or getattr(getattr(event, "user", None), "tiny_id", None)
-        or getattr(getattr(event, "user", None), "member_openid", None)
-        or getattr(getattr(event, "user", None), "openid", None)
-        or getattr(getattr(event, "user", None), "id", None)
-    )
-    nickname = (
-        getattr(event, "card", None)
-        or getattr(getattr(event, "user", None), "nickname", None)
-        or getattr(getattr(event, "user", None), "member_name", None)
-        or None
-    )
+    group_id = getattr(event, "group_id", None)
+    user_id = getattr(event, "user_id", None) or getattr(getattr(event, "user", None), "id", None)
+    nickname = getattr(event, "card", None) or getattr(getattr(event, "user", None), "nickname", None)
 
     if not group_id or not user_id:
-        return  # 不是群成员事件
+        return
 
     qq = str(user_id)
     gid = str(group_id)
 
-    # 判定事件类型
-    is_increase = False
-    is_decrease = False
-
-    if notice_type == "group_member_increase" or (event_name and "increase" in event_name):
+    if notice_type == "group_member_increase":
         is_increase = True
-    elif notice_type == "group_member_decrease" or (event_name and "decrease" in event_name):
-        is_decrease = True
-    elif "Increase" in event_class:  # QQ 官方：GroupMemberIncreaseEvent
-        is_increase = True
-    elif "Decrease" in event_class:
-        is_decrease = True
-
-    if not is_increase and not is_decrease:
+    elif notice_type == "group_member_decrease":
+        is_increase = False
+    else:
         return
 
-    # 仅处理 SYNC_GROUPS 白名单内的群
     if SYNC_GROUPS and gid not in SYNC_GROUPS:
         return
 
     if is_increase:
         await _upsert_one(gid, qq, str(nickname) if nickname else None)
-    if is_decrease:
+    else:
         await _set_inactive(gid, qq)
 
 

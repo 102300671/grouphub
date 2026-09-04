@@ -28,10 +28,10 @@ from app.zfile_client import (
     WORK_FILE_EXTS,
     UploadGuardError,
     ZFileError,
-    get_zfile,
     public_url,
     validate_upload,
 )
+from app.storage import get_storage
 
 router = APIRouter()
 
@@ -344,8 +344,8 @@ def _upload_one_work_file(
 
     zpath = ZFilePath.work_file_dir(w.type, me.qq, w.id, w.title)
     try:
-        zf = get_zfile()
-        url = zf.upload_file(file_name, file_content, path=zpath)
+        storage = get_storage()
+        url = storage.upload_file(file_name, file_content, path=zpath)
     except ZFileError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"[{file_name}] zfile 上传失败: {e.msg}")
     except Exception as e:
@@ -788,8 +788,8 @@ def upload_work_cover(
     ext = Path(file_name).suffix.lower() or ".jpg"
     zpath = ZFilePath.cover(work_id, ext)
     try:
-        zf = get_zfile()
-        url = zf.upload_file(f"cover{ext}", file_content, path=zpath)
+        storage = get_storage()
+        url = storage.upload_file(f"cover{ext}", file_content, path=zpath)
     except ZFileError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"zfile 上传失败: {e.msg}")
     except Exception as e:

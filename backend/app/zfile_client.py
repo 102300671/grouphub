@@ -242,6 +242,20 @@ class ZFileClient:
             raise ZFileError(f"获取上传 URL 失败，返回: {data}")
         return data
 
+    def get_file_url(self, rel_path: str) -> str:
+        """根据相对路径获取文件直链。
+
+        rel_path 形如 "/covers/1.jpg/cover.jpg"。
+        从父目录 list_files 中查找匹配文件名。
+        """
+        parent = rel_path.rsplit("/", 1)[0] or "/"
+        file_name = rel_path.rsplit("/", 1)[-1]
+        files = self.list_files(parent)
+        for f in files:
+            if f.get("name") == file_name and f.get("type") == "FILE":
+                return f.get("url", "")
+        raise ZFileError(f"zfile 中未找到文件: {rel_path}")
+
     def upload_file(self, file_name: str, file_content: bytes, path: str = "/") -> str:
         """上传文件到 zfile。返回文件直链 URL。
 
@@ -287,21 +301,13 @@ _client: Optional[ZFileClient] = None
 
 
 def public_url(url: str | None) -> str | None:
-    """把 DB 里存的 zfile 绝对直链改写为同源相对路径（默认 /zfile/...）。
+    """把 DB 里存的绝对直链改写为同源相对路径。
 
-    前端（vite dev / 生产代理）再把 /zfile/* 转发到 zfile_base_url，
-    浏览器无需直连 zfile 端口，内网穿透只暴露前端端口即可。
+    委托到 app.storage.public_url（兼容 zfile + alist 两种 URL 格式）。
+    保留此函数是为了向后兼容已有的 from app.zfile_client import public_url。
     """
-    if not url:
-        return url
-    s = get_settings()
-    prefix = s.zfile_public_prefix
-    if not prefix:
-        return url
-    base = s.zfile_base_url.rstrip("/")
-    if url.startswith(base + "/"):
-        return f"{prefix}{url[len(base):]}"
-    return url
+    from app.storage import public_url as _unified_public_url
+    return _unified_public_url(url)
 
 
 def get_zfile() -> ZFileClient:

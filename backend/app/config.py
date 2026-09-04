@@ -34,15 +34,23 @@ class Settings(BaseSettings):
     # （防止你在改环境变量前就已经注册过一个普通账号）。
     admin_qqs: str = ""
 
-    # zfile 文件存储
-    zfile_base_url: str = "http://localhost:8081"
-    zfile_username: str = "admin"
-    zfile_password: str = ""
-    zfile_storage_key: str = "local"  # zfile 里配置的存储源 key
-    # 前端访问 zfile 直链的同源前缀：DB 里存的是 zfile 绝对 URL，返回给前端时
-    # 把 zfile_base_url 前缀替换为该值（如 /zfile），由前端 dev/生产代理转发到 zfile，
-    # 这样内网穿透只需暴露前端一个端口。置空则原样返回绝对 URL。
+    # 文件存储（支持 zfile 和 alist，一个主一个回退）
+    storage_primary: str = "zfile"  # "zfile" | "alist"
     zfile_public_prefix: str = "/zfile"
+    alist_public_prefix: str = "/alist"
+
+    # zfile 配置
+    zfile_base_url: str = "http://localhost:8081"
+    zfile_username: str = "grouphub"
+    zfile_password: str = ""
+    zfile_storage_key: str = "grouphub"
+
+    # alist 配置
+    alist_base_url: str = "http://localhost:5244"
+    alist_username: str = "grouphub"
+    alist_password: str = ""
+    # 路径前缀：本地存储需设为存储源名（如 /grouphub），云盘留空
+    alist_path_prefix: str = ""
 
     # 作品详情页「张三、李四 等共 N 人」的展示阈值（PRD §9#5）：关联人数 ≥ 阈值才显示并展开
     show_relation_threshold: int = 3
