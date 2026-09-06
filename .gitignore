@@ -29,6 +29,8 @@ frontend/dist/
 *.tsbuildinfo
 
 # ========== 本地环境变量（包含密钥，禁止入库） ==========
+# 注意：qqbot/.env.prod 含 QQ 官方机器人 AppSecret（Access Token 鉴权），同样被下方规则忽略
+# 可入库的示例文件：backend/.env.example、frontend/.env.example、qqbot/.env.prod.example
 .env
 .venv
 .env.local

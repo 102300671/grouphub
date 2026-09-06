@@ -15,6 +15,21 @@ export interface AuthTokenOut {
   user: AuthUser;
 }
 
+/** 注册第一步响应：账号已暂存，返回绑定码等用户发给机器人校验 */
+export interface RegisterPendingOut {
+  ok: boolean;
+  qq: string;
+  code: string;
+  expires_in_minutes: number;
+  message: string;
+}
+
+/** 注册绑定状态轮询响应 */
+export interface RegisterStatusOut {
+  ok: boolean;
+  pending: boolean;
+}
+
 export interface SimpleMessageOut {
   ok?: boolean;
   message?: string;

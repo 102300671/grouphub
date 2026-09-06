@@ -2,13 +2,16 @@
 
 策略（事件驱动，启动不做全量拉取）：
   - 群友在站点注册：站点反向调 POST /bot/avatars/fetch {qq}
-    → 本插件在 SYNC_GROUPS 中用 get_group_member_info 查该 QQ 头像
-    → 推给后端 /bot/members/sync_avatar
-  - 进群事件：顺手拉单个新成员头像并推送
+    → 本插件用 OneBot v11 get_group_member_info 确认在群后
+      推送 QQ 头像外链（https://q1.qlogo.cn/...）给后端 /bot/members/sync_avatar
+    → 仅 QQ 官方 bot 在线时无法校验在群（官方无成员信息 API），
+      直接推头像外链（注册流程本身已被后端白名单校验兜底）
+  - 进群事件（OneBot v11）：顺手拉单个新成员头像并推送
   - SUPERUSER /sync_avatar：手动触发全量同步（补历史数据用）
   后端负责：下载头像 → 转存 zfile /avatars/ → 写 group_members / users
 
-适配器：OneBot v11
+适配器：QQ 官方为主用（不参与头像拉取，无成员信息 API），
+成员校验 / 全量同步依赖备用 OneBot v11。
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ from nonebot.adapters import Bot, Event
 from nonebot.permission import SUPERUSER
 from nonebot.rule import to_me
 
+from ._lib.bots import is_onebot_v11, onebot_bots
 from ._lib.client import backend_client
 from .group_member_sync import SYNC_GROUPS, _fetch_group_member_list
 
@@ -41,16 +45,20 @@ AVATAR_FETCH_INTERVAL = float(os.getenv("AVATAR_FETCH_INTERVAL", "0.3") or "0.3"
 # ------------------ 核心 ------------------
 
 async def _fetch_avatar_url(bot: Bot, group_id: str, qq: str) -> Optional[str]:
-    """获取 QQ 头像 URL。
+    """获取 QQ 头像 URL：https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640。
 
-    先调 get_group_member_info 确认用户是否在群中（权限检查），
-    确认后返回标准 QQ 头像 URL：https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640
+    OneBot v11：先调 get_group_member_info 确认用户在群中（权限检查）。
+    QQ 官方：无成员信息 API，跳过在群校验直接返回头像外链
+    （注册流程的后端白名单校验已兜底）。
     """
-    try:
-        await bot.call_api("get_group_member_info", group_id=int(group_id), user_id=int(qq))
-    except Exception as exc:  # noqa: BLE001
-        logger.debug(f"[avatar_sync] 用户不在群中或接口受限：group={group_id} qq={qq} {exc}")
-        return None
+    if is_onebot_v11(bot):
+        try:
+            await bot.call_api("get_group_member_info", group_id=int(group_id), user_id=int(qq))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[avatar_sync] 用户不在群中或接口受限：group={group_id} qq={qq} {exc}")
+            return None
+    else:
+        logger.debug(f"[avatar_sync] bot={bot.self_id} 非 OneBot 适配器，跳过在群校验直接取头像：qq={qq}")
     return f"https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
 
 
@@ -96,15 +104,19 @@ async def sync_avatars(bot: Bot, group_ids: Optional[List[str]] = None, limit: i
 
 
 async def full_avatar_sync() -> List[Dict[str, Any]]:
-    """公共入口：对每个已连接 bot 执行一次头像同步。"""
-    from nonebot import get_bots
+    """公共入口：对每个 OneBot v11 bot 执行一次头像同步。
 
-    bots = get_bots()
+    全量同步依赖群成员列表 API（仅 OneBot v11 提供），QQ 官方 bot 不参与。
+    """
+    bots = onebot_bots()
     if not bots:
-        logger.warning("[avatar_sync] 当前没有已连接的 bot，跳过头像同步。")
+        logger.warning(
+            "[avatar_sync] 没有已连接的 OneBot v11 bot，跳过头像同步。"
+            "（QQ 官方适配器无群成员列表 API，全量同步需备用 OneBot 通道在线）"
+        )
         return []
     results = []
-    for bot in bots.values():
+    for bot in bots:
         results.append(await sync_avatars(bot))
     return results
 
@@ -115,16 +127,26 @@ BOT_API_TOKEN = os.getenv("BOT_API_TOKEN", "")
 
 
 async def fetch_avatar_for_qq(qq: str) -> Dict[str, Any]:
-    """在 SYNC_GROUPS 中按需拉单个 QQ 的头像并推给后端。返回 {"ok", "avatar_url"?}。
-    由站点注册流程反向调 POST /bot/avatars/fetch 触发。"""
+    """按需拉单个 QQ 的头像并推给后端。返回 {"ok", "avatar_url"?}。
+
+    由站点注册流程反向调 POST /bot/avatars/fetch 触发。
+    优先用 OneBot v11 bot 在群校验；仅官方 bot 在线时跳过校验直接推外链
+    （注册流程本身已被后端白名单校验兜底）。
+    """
     from nonebot import get_bots
 
-    bots = get_bots()
-    if not bots:
+    if not get_bots():
         logger.warning(f"[avatar_sync] 当前没有已连接的 bot，无法拉取头像：qq={qq}")
         return {"ok": False, "message": "no bot connected"}
 
-    bot = next(iter(bots.values()))
+    # 优先 OneBot（可校验在群）；仅官方在线时用第一个 bot（跳过校验）
+    ob_bots = onebot_bots()
+    bot = ob_bots[0] if ob_bots else next(iter(get_bots().values()))
+    if not is_onebot_v11(bot):
+        logger.warning(
+            f"[avatar_sync] 仅 QQ 官方 bot 在线，无法校验在群状态，直接推头像外链：qq={qq}"
+        )
+
     avatar_url: Optional[str] = None
     for gid in SYNC_GROUPS:
         avatar_url = await _fetch_avatar_url(bot, gid, qq)

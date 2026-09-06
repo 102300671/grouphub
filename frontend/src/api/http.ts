@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
-import type { AuthTokenOut, SimpleMessageOut } from "@/types/api";
+import type { AuthTokenOut, RegisterPendingOut, RegisterStatusOut, SimpleMessageOut } from "@/types/api";
 
 const TOKEN_KEY = "grouphub.access_token";
 const USER_KEY = "grouphub.current_user";
@@ -92,7 +92,14 @@ export async function request<T = unknown>(config: AxiosRequestConfig): Promise<
 /* ----------------- 按业务分类的 client ----------------- */
 export const authClient = {
   register(data: { qq: string; password: string; nickname?: string }) {
-    return request<AuthTokenOut>({ url: "/auth/register", method: "POST", data });
+    return request<RegisterPendingOut>({ url: "/auth/register", method: "POST", data });
+  },
+  registerStatus(qq: string) {
+    return request<RegisterStatusOut>({
+      url: "/auth/register/status",
+      method: "GET",
+      params: { qq },
+    });
   },
   login(data: { qq: string; password: string }) {
     return request<AuthTokenOut>({ url: "/auth/login", method: "POST", data });

@@ -18,11 +18,12 @@ plugin_dirs = ["plugins"]
 builtin_plugins = ["echo", "single_session"]
 
 [tool.nonebot.adapters]
-nonebot-adapter-onebot = [
-    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
-]
+# QQ 官方适配器为主用，OneBot v11 为备用（连接配置见 .env.prod）
 nonebot-adapter-qq = [
     { name = "QQ", module_name = "nonebot.adapters.qq" }
+]
+nonebot-adapter-onebot = [
+    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
 ]
 "@local" = []
 

@@ -60,9 +60,33 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def _migrate_sqlite(engine) -> None:
+    """SQLite 轻量迁移：create_all 不会给已有表加列，这里幂等补列。"""
+    if not _database_url.startswith("sqlite"):
+        return
+    from sqlalchemy import text
+
+    wanted = {
+        "verification_codes": {
+            "purpose": "VARCHAR(20) NOT NULL DEFAULT 'login'",
+        },
+    }
+    with engine.connect() as conn:
+        for table, columns in wanted.items():
+            rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            if not rows:
+                continue  # 表还不存在，create_all 会按新模型建
+            existing = {row[1] for row in rows}
+            for col, ddl in columns.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+        conn.commit()
+
+
 def init_db() -> None:
     """首次启动时创建所有表。"""
     # 先导入所有模型，确保 ORM 已注册
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite(engine)

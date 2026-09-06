@@ -6,19 +6,25 @@
   /安利 <作品名>  → 把作品入库，提交者自动挂 recommender（后端 /bot/works/submit）
                     提交者 QQ 无站点账号时后端自动建号（随机密码 + 群名片昵称）
 
+适配器：QQ 官方为主用（群 @ 消息触发，bot.send 被动回复），
+OneBot v11 为备用（@ 或 / 前缀触发）。
+身份：OneBot 通道自带真实 QQ；官方通道只有 openid，会查注册绑定时建立的
+openid ↔ QQ 映射（未绑定则提示先去站点完成注册绑定）。
+
 配置：.env 的 SITE_BASE_URL 用于消息里的详情跳转链接。
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
-from nonebot import get_bots, logger, on_command
+from nonebot import logger, on_command
 from nonebot.adapters import Bot, Event
 from nonebot.rule import to_me
 
+from ._lib.bots import resolve_openid_qq
 from ._lib.client import backend_client
 _ENV_PATH = Path(__file__).resolve().parents[1] / ".env.prod"
 if _ENV_PATH.exists():
@@ -36,10 +42,25 @@ def _cmd_args(event: Event, prefixes: List[str]) -> str:
     return plain.strip()
 
 
-def _sender_qq(event: Event) -> str:
-    """OneBot v11：从 event.user_id 或 event.user.id 取 QQ。"""
-    qq = getattr(event, "user_id", None) or getattr(getattr(event, "user", None), "id", None)
-    return str(qq) if qq else ""
+async def _sender_qq(event: Event) -> Optional[str]:
+    """取发送者真实 QQ（兼容双适配器）；无法识别返回 None。
+
+    OneBot v11：event.get_user_id() → 真实 QQ 号。
+    QQ 官方：event.get_user_id() → openid，查注册绑定映射换成真实 QQ。
+    """
+    try:
+        uid = event.get_user_id()
+    except Exception:  # noqa: BLE001
+        uid = None
+    if not uid:
+        uid = getattr(event, "user_id", None) or getattr(getattr(event, "user", None), "id", None)
+    if not uid:
+        return None
+    uid = str(uid)
+    if uid.isdigit():
+        return uid
+    openid_type = "group" if getattr(event, "group_openid", None) else "c2c"
+    return await resolve_openid_qq(uid, openid_type)
 
 
 def _fmt_works(items: list, with_score: bool = False) -> str:
@@ -110,9 +131,9 @@ async def _submit_handler(bot: Bot, event: Event):
     if not title:
         await bot.send(event, "用法：/安利 <作品名>\n例：/安利 诡秘之主\n提交后会自动入库并记你为推荐人。")
         return
-    qq = _sender_qq(event)
+    qq = await _sender_qq(event)
     if not qq:
-        await bot.send(event, "⚠️ 无法识别你的 QQ，稍后再试。")
+        await bot.send(event, "⚠️ 无法识别你的真实 QQ：请先在站点完成注册绑定（注册页会给你一个验证码，发给机器人即可），再使用安利。")
         return
     try:
         resp = await backend_client.post("/bot/works/submit", json={"qq": qq, "title": title})

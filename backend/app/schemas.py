@@ -93,6 +93,21 @@ class AuthTokenOut(BaseModel):
     user: Dict[str, Any]  # {"id", "qq", "nickname", "role"}
 
 
+class RegisterPendingOut(BaseModel):
+    """注册第一步响应：账号已暂存，返回绑定码等用户发给机器人校验。"""
+    ok: bool = True
+    qq: str
+    code: str
+    expires_in_minutes: int
+    message: str
+
+
+class RegisterStatusOut(BaseModel):
+    """注册绑定状态轮询响应。"""
+    ok: bool = True
+    pending: bool  # True=还有待验证的注册码（未验证）
+
+
 # =============== Bot 发给站点（验证码发送回调入参） ===============
 
 class BotSendCodeIn(BaseModel):
@@ -100,6 +115,26 @@ class BotSendCodeIn(BaseModel):
     这里是 nonebot2 端 HTTP 服务收到的入参模型定义（放 schemas 里统一定义）。"""
     qq: str
     code: str
+
+
+class BotVerifyRegisterIn(BaseModel):
+    """用户把注册绑定码发给 bot → bot 调 /bot/auth/verify-register 校验。
+
+    - OneBot v11 通道：qq=真实 QQ 号（事件自带），group_id=真实群号（群消息时）
+    - QQ 官方通道：openid=member_openid/user_openid，拿不到真实 QQ 与真实群号
+    """
+    code: str = Field(..., min_length=4, max_length=8)
+    qq: Optional[str] = None          # OneBot 通道提供
+    openid: Optional[str] = None      # QQ 官方通道提供
+    openid_type: Optional[str] = None  # group | c2c
+    group_id: Optional[str] = None    # 白名单归属群（拿不到时由 bot 传 SYNC_GROUPS 兜底）
+    nickname_in_group: Optional[str] = None
+
+
+class BotResolveOpenidOut(BaseModel):
+    """openid → 真实 QQ 解析结果。"""
+    ok: bool = True
+    qq: Optional[str] = None
 
 
 class BotNotifyLoginIn(BaseModel):

@@ -18,8 +18,8 @@ RUN pip install --no-cache-dir \
     "nonebot-plugin-sentry>=2.0.0" \
     "nonebot-plugin-localstore>=0.7.4"
 
-# pyproject.toml 提供 [tool.nonebot] 插件/适配器配置；plugins/ 是业务插件
-COPY pyproject.toml ./
+# bot.py 提供显式入口（QQ 官方主用 + OneBot v11 备用）；plugins/ 是业务插件
+COPY bot.py pyproject.toml ./
 COPY plugins ./plugins
 
 EXPOSE 8083

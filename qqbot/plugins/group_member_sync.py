@@ -5,7 +5,11 @@
   - 监听进群/退群事件：upsert_one / set_inactive
   - 命令行（管理员）：`/sync_member <group_id|all>` 手动触发一次全量重同步
 
-适配器：OneBot v11
+适配器：QQ 官方为主用，但成员列表 / 成员信息 API 仅 OneBot v11 提供
+（QQ 官方平台没有群成员列表接口），故本插件的拉取动作自动回落到备用
+OneBot v11（NapCat/LLOneBot 等）；仅官方适配器在线时跳过并明确告警。
+
+OneBot v11 事件：
   - 进群 = notice.group_member_increase
   - 退群 = notice.group_member_decrease
   - 名片 = notice.group_card（部分实现）
@@ -25,6 +29,7 @@ from nonebot.adapters import Bot, Event
 from nonebot.permission import SUPERUSER
 from nonebot.rule import to_me
 
+from ._lib.bots import is_onebot_v11, onebot_bots
 from ._lib.client import backend_client
 
 _ENV_PATH = Path(__file__).resolve().parents[1] / ".env.prod"
@@ -58,7 +63,16 @@ def _normalize_member(raw: Dict[str, Any]) -> Dict[str, str]:
 # ------------------ 全量同步（对某 bot + 某 group） ------------------
 
 async def _fetch_group_member_list(bot: Bot, group_id: str) -> List[Dict[str, str]]:
-    """OneBot v11：get_group_member_list(group_id) 返回 list[dict]，无分页。"""
+    """OneBot v11：get_group_member_list(group_id) 返回 list[dict]，无分页。
+
+    QQ 官方适配器没有群成员列表 API，直接返回空列表（调用方负责告警）。
+    """
+    if not is_onebot_v11(bot):
+        logger.warning(
+            f"[group_member_sync] bot={bot.self_id} 不是 OneBot v11 适配器"
+            f"（QQ 官方平台无群成员列表 API），跳过群 {group_id} 成员拉取。"
+        )
+        return []
     try:
         members_raw = await bot.call_api("get_group_member_list", group_id=group_id) or []
     except Exception as exc:  # noqa: BLE001
@@ -108,17 +122,18 @@ async def _sync_one_group(bot: Bot, group_id: str, mark_inactive_others: bool = 
 
 
 async def full_sync(groups: Optional[List[str]] = None, mark_inactive_others: bool = True) -> List[Dict[str, Any]]:
-    """公共入口：对所有 bot + 目标群做一次全量同步。
+    """公共入口：对所有 OneBot v11 bot + 目标群做一次全量同步。
 
-    会遍历所有已连接的 bot，每个 bot 尝试同步 groups（默认 SYNC_GROUPS）里的每个群。
+    成员列表 API 仅 OneBot v11 提供（QQ 官方平台没有该接口），
+    因此只遍历备用 OneBot bot；主用 QQ 官方 bot 不参与成员拉取。
     """
-    # 懒加载，避免 import 循环
-    from nonebot import get_bots
-
-    bots = get_bots()
+    bots = onebot_bots()
     if not bots:
-        logger.warning("[group_member_sync] 当前没有已连接的 bot，跳过全量同步。")
-        return [{"ok": False, "error": "no bot connected"}]
+        logger.warning(
+            "[group_member_sync] 没有已连接的 OneBot v11 bot，跳过全量同步。"
+            "（QQ 官方适配器无群成员列表 API，成员同步需备用 OneBot 通道在线）"
+        )
+        return [{"ok": False, "error": "no onebot v11 bot connected (member list API requires OneBot v11)"}]
 
     groups = groups or SYNC_GROUPS
     if not groups:
@@ -140,8 +155,13 @@ _driver = get_driver()
 
 
 @_driver.on_bot_connect
-async def _startup_full_sync(_: Bot):
-    """机器人连上后延迟 10s 再跑，避免一上线 QQ 端限流 / 还没握手。"""
+async def _startup_full_sync(bot: Bot):
+    """OneBot v11 bot 连上后延迟 10s 再跑，避免一上线 QQ 端限流 / 还没握手。
+
+    QQ 官方 bot 连接不触发（其无群成员列表 API）。
+    """
+    if not is_onebot_v11(bot):
+        return
     await asyncio.sleep(10)
     await full_sync()
 

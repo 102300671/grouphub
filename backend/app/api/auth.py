@@ -112,44 +112,101 @@ def _guess_nickname_by_qq(db: Session, qq: str) -> str | None:
     return row.nickname_in_group if row and row.nickname_in_group else None
 
 
-# ------------------- 注册 -------------------
+# ------------------- 注册（两步：发码 → 用户发给 bot 校验） -------------------
 
-@router.post("/register", response_model=schemas.AuthTokenOut)
+@router.post("/register", response_model=schemas.RegisterPendingOut)
 def register(payload: schemas.RegisterIn, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
-    # 1. 白名单校验
-    if not is_qq_in_group(payload.qq, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_IN_GROUP_MSG)
+    """注册第一步：输入 QQ 号 + 密码 → 生成绑定码并直接返回给页面展示。
 
-    # 2. 已存在？
+    用户随后把验证码发给机器人（群内 @机器人 `绑定 <码>` 或私聊），bot 调
+    /bot/auth/verify-register 校验通过后：QQ 加入白名单 + 绑定官方 openid，
+    之后即可正常登录使用。
+
+    不再依赖 bot 私聊发码（QQ 官方适配器无法主动私聊），验证码方向反转。
+    """
+    # 1. 已注册且在白名单 → 无需再注册
     existing = db.query(models.User).filter(models.User.qq == payload.qq).first()
-    if existing is not None:
+    if existing is not None and is_qq_in_group(payload.qq, db):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该 QQ 已注册，请直接登录")
+    # 已注册但不在白名单（如官方通道注册未完成验证 / 白名单被同步清掉）→ 允许重新发码激活
 
-    # 3. 创建用户（昵称优先级：显式传值 > 群名片；角色：在 ADMIN_QQS 中 → admin，否则 member）
-    nickname = payload.nickname or _guess_nickname_by_qq(db, payload.qq) or f"群友{payload.qq}"
-    initial_role = (
-        models.UserRole.ADMIN if payload.qq in settings.admin_qq_set else models.UserRole.MEMBER
-    )
-    user = models.User(
+    # 2. 频率限制：同一 QQ 两次发码最小间隔
+    now = utcnow()
+    last_sent = _code_last_sent.get(payload.qq)
+    if last_sent is not None and (now - last_sent).total_seconds() < CODE_RESEND_SECONDS:
+        wait = CODE_RESEND_SECONDS - int((now - last_sent).total_seconds())
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"发送过于频繁，请 {wait} 秒后再试",
+        )
+
+    # 3. 生成绑定码，作废该 QQ 所有旧码（登录码与注册码互不影响，按 purpose 区分）
+    import random
+    code = f"{random.randint(0, 999999):06d}"
+    db.query(models.VerificationCode).filter(
+        models.VerificationCode.qq == payload.qq,
+        models.VerificationCode.purpose == "register",
+        models.VerificationCode.used.is_(False),
+    ).update({models.VerificationCode.used: True}, synchronize_session=False)
+
+    vc = models.VerificationCode(
         qq=payload.qq,
-        password_hash=hash_password(payload.password),
-        nickname=nickname,
-        role=initial_role,
+        code=code,
+        purpose="register",
+        used=False,
+        expires_at=now + timedelta(minutes=CODE_TTL_MINUTES),
+        created_at=now,
     )
-    db.add(user)
+    db.add(vc)
+
+    # 4. 建号（不存在时）：密码即用户输入值；账号在验证通过（加白名单）前无法登录
+    #    昵称留空时先用占位符：验证绑定成功后由 bot 侧回填（官方通道=QQ 用户名，OneBot=群名片）
+    if existing is None:
+        nickname = payload.nickname or f"群友{payload.qq}"
+        initial_role = (
+            models.UserRole.ADMIN if payload.qq in settings.admin_qq_set else models.UserRole.MEMBER
+        )
+        db.add(models.User(
+            qq=payload.qq,
+            password_hash=hash_password(payload.password),
+            nickname=nickname,
+            role=initial_role,
+        ))
+    elif payload.nickname:
+        existing.nickname = payload.nickname
     db.commit()
-    db.refresh(user)
 
-    _backfill_avatar(db, user)
-    db.commit()
+    _code_last_sent[payload.qq] = now
+    _code_attempts.pop(payload.qq, None)
 
-    # 注册后仍无头像 → 让 bot 实时拉取该 QQ 头像（best-effort，bot 离线时静默降级）
-    if not user.avatar_url:
-        if _push_to_bot(settings, "/bot/avatars/fetch", {"qq": payload.qq}):
-            db.refresh(user)  # bot 推送成功时头像已落库，刷新对象让响应直接带上
+    return schemas.RegisterPendingOut(
+        ok=True,
+        qq=payload.qq,
+        code=code,
+        expires_in_minutes=CODE_TTL_MINUTES,
+        message=(
+            f"请在 {CODE_TTL_MINUTES} 分钟内把验证码发给机器人完成验证："
+            "群内 @机器人 发送「绑定 " + code + "」，或添加机器人为好友私聊发送"
+        ),
+    )
 
-    token = create_access_token(user.id, settings)
-    return schemas.AuthTokenOut(access_token=token, user=_user_out(user))
+
+@router.get("/register/status", response_model=schemas.RegisterStatusOut)
+def register_status(qq: str, db: Session = Depends(get_db)):
+    """注册第二步轮询：该 QQ 是否还有未使用的注册绑定码。
+
+    pending=False 即码已被 bot 侧核销（验证完成），前端可尝试密码登录。
+    """
+    vc = (
+        db.query(models.VerificationCode)
+        .filter(
+            models.VerificationCode.qq == qq,
+            models.VerificationCode.purpose == "register",
+            models.VerificationCode.used.is_(False),
+        )
+        .first()
+    )
+    return schemas.RegisterStatusOut(ok=True, pending=vc is not None)
 
 
 # ------------------- 登录（密码方式） -------------------
@@ -202,15 +259,17 @@ def send_code(payload: schemas.SendCodeIn, db: Session = Depends(get_db), settin
     import random
     code = f"{random.randint(0, 999999):06d}"
 
-    # 作废旧码：该 QQ 所有未使用的验证码标记为已用，旧码立即失效
+    # 作废旧码：该 QQ 所有未使用的登录验证码标记为已用，旧码立即失效
     db.query(models.VerificationCode).filter(
         models.VerificationCode.qq == payload.qq,
+        models.VerificationCode.purpose == "login",
         models.VerificationCode.used.is_(False),
     ).update({models.VerificationCode.used: True}, synchronize_session=False)
 
     vc = models.VerificationCode(
         qq=payload.qq,
         code=code,
+        purpose="login",
         used=False,
         expires_at=now + timedelta(minutes=CODE_TTL_MINUTES),
         created_at=now,
@@ -255,6 +314,7 @@ def confirm_code(payload: schemas.ConfirmCodeIn, request: Request, db: Session =
         db.query(models.VerificationCode)
         .filter(
             models.VerificationCode.qq == payload.qq,
+            models.VerificationCode.purpose == "login",
             models.VerificationCode.code == payload.code,
         )
         .order_by(models.VerificationCode.created_at.desc())

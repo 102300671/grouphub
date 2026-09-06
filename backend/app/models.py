@@ -121,15 +121,41 @@ class GroupMember(Base):
 
 
 class VerificationCode(Base):
-    """QQ 验证码登录临时表（插件 #2 auth_code 用）。"""
+    """QQ 验证码临时表（插件 #2 auth_code 用）。
+
+    purpose 区分用途：
+      - login：登录验证码（站点生成 → bot 私聊下发 → 用户回填）
+      - register：注册绑定码（站点生成 → 页面展示给用户 → 用户发给 bot 校验）
+    """
     __tablename__ = "verification_codes"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     qq = Column(String(20), index=True, nullable=False)
     code = Column(String(6), nullable=False)
+    purpose = Column(String(20), nullable=False, default="login", server_default="login", index=True)
     used = Column(Boolean, nullable=False, default=False, server_default="0")
     expires_at = Column(DateTime, nullable=False, index=True)
     created_at = Column(DateTime, default=_now, nullable=False)
+
+
+class QQOpenidBinding(Base):
+    """QQ 官方平台 openid ↔ 真实 QQ 绑定（注册验证通过时建立）。
+
+    官方平台 openid 按场景区分：群聊 member_openid（type='group'）、
+    单聊 user_openid（type='c2c'），同一用户两类 openid 不同，各存一条。
+    用于把官方通道收到的群/单聊消息解析回真实 QQ 号。
+    """
+    __tablename__ = "qq_openid_bindings"
+    __table_args__ = (
+        UniqueConstraint("openid", name="uq_qq_openid_openid"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    qq = Column(String(20), index=True, nullable=False)
+    openid = Column(String(128), nullable=False)
+    openid_type = Column(String(10), nullable=False, default="group", server_default="group")  # group | c2c
+    created_at = Column(DateTime, default=_now, nullable=False)
+    updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
 
 
 class Work(Base):

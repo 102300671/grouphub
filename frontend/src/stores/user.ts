@@ -25,8 +25,12 @@ export const useUserStore = defineStore("user", () => {
   }
 
   async function register(payload: { qq: string; password: string; nickname?: string }) {
-    const out = await authClient.register(payload);
-    _apply(out);
+    // 注册第一步：只生成绑定码并返回（账号在验证通过前无法登录，不写登录态）
+    return authClient.register(payload);
+  }
+
+  async function registerStatus(qq: string) {
+    return authClient.registerStatus(qq);
   }
 
   async function loginByCode(qq: string, code: string) {
@@ -76,6 +80,7 @@ export const useUserStore = defineStore("user", () => {
     role,
     login,
     register,
+    registerStatus,
     loginByCode,
     logout,
     ensureMe,
