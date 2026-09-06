@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRouter } from "vue-router";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useUserStore } from "@/stores/user";
 
 const user = useUserStore();
@@ -24,6 +25,57 @@ async function onLogout() {
   await user.logout();
   router.replace("/login");
 }
+
+/* ---------- 老账号 openid 补绑：登录后检查一次，未绑定弹窗引导发码给机器人 ---------- */
+const showBindModal = ref(false);
+const bindCode = ref("");
+const bindExpires = ref(10);
+let bindPollTimer: ReturnType<typeof setInterval> | null = null;
+
+onMounted(async () => {
+  if (!user.isLoggedIn || !user.pendingBindCheck) return;
+  user.pendingBindCheck = false;
+  try {
+    const out = await user.fetchBindCode();
+    if (!out.bound && out.code) {
+      bindCode.value = out.code;
+      bindExpires.value = out.expires_in_minutes || 10;
+      showBindModal.value = true;
+      startBindPoll();
+    }
+  } catch {
+    // 检查失败（如 60s 内重复登录触发限频）不影响正常使用
+  }
+});
+
+function startBindPoll() {
+  stopBindPoll();
+  bindPollTimer = setInterval(async () => {
+    try {
+      const st = await user.checkBindStatus();
+      if (st.bound) {
+        stopBindPoll();
+        showBindModal.value = false;
+      }
+    } catch {
+      // 轮询失败忽略，下个周期重试
+    }
+  }, 3000);
+}
+function stopBindPoll() {
+  if (bindPollTimer) {
+    clearInterval(bindPollTimer);
+    bindPollTimer = null;
+  }
+}
+function dismissBind() {
+  stopBindPoll();
+  showBindModal.value = false;
+}
+function copyBindCode() {
+  navigator.clipboard?.writeText(bindCode.value).catch(() => {});
+}
+onBeforeUnmount(stopBindPoll);
 </script>
 
 <template>
@@ -66,6 +118,28 @@ async function onLogout() {
     <footer class="container footer muted text-sm">
       🌸 © 群资源站 · 私域百合资源共享空间 · 由 QQ 群成员白名单保障权限
     </footer>
+
+    <!-- 老账号 openid 补绑弹窗：把验证码发给机器人即可完成绑定，绑定后自动关闭 -->
+    <div v-if="showBindModal" class="modal-mask" @click.self="dismissBind">
+      <div class="modal card">
+        <div class="modal-head">
+          <h3>🔔 绑定机器人官方身份</h3>
+        </div>
+        <p class="muted text-sm">
+          检测到你的账号还未绑定机器人的官方通道身份，群内「热门 / 搜索 / 安利」等命令需要绑定后才能识别你。把下方验证码发给机器人即可完成：
+        </p>
+        <div class="bind-code-box">
+          <span class="bind-code-text">{{ bindCode }}</span>
+          <button class="btn btn-ghost btn-sm" type="button" @click="copyBindCode">复制</button>
+        </div>
+        <div class="bind-cmd-box">@机器人 绑定 {{ bindCode }}</div>
+        <p class="muted text-sm">在群里 @机器人 发送上方命令（或私聊机器人），本页会自动检测，绑定成功后弹窗自动关闭。</p>
+        <div class="modal-foot">
+          <span class="muted text-sm">有效期 {{ bindExpires }} 分钟</span>
+          <button class="btn btn-ghost btn-sm" type="button" @click="dismissBind">稍后再说</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -154,5 +228,57 @@ async function onLogout() {
   .nav-links {
     display: none;
   }
+}
+
+/* ---------- openid 补绑弹窗 ---------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal {
+  width: 100%;
+  max-width: 420px;
+  box-shadow: var(--shadow-md);
+}
+.modal-head h3 {
+  margin: 0 0 8px;
+}
+.bind-code-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 8px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(79, 70, 229, 0.08);
+  border: 1px dashed rgba(79, 70, 229, 0.4);
+}
+.bind-code-text {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  font-family: var(--font-mono, monospace);
+}
+.bind-cmd-box {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--color-bg-soft, #f5f5f7);
+  border: 1px solid var(--color-border, #e5e5ea);
+  font-family: var(--font-mono, monospace);
+  margin-bottom: 8px;
+  user-select: all;
+}
+.modal-foot {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 </style>

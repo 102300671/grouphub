@@ -66,21 +66,24 @@ def verify_register(
     settings: Settings = Depends(get_settings),
     _: BotAuthenticated = Depends(),
 ) -> dict:
-    """用户把注册绑定码发给 bot → bot 核销。
+    """用户把注册/绑定码发给 bot → bot 核销。
 
-    流程：校验码（purpose=register、未用、未过期；OneBot 通道校验 qq 一致）
+    码来源两种（purpose 均可）：
+      - register：站点注册流程发的码（新用户）
+      - bind：老账号登录后补绑 openid 的码（OneBot 时代注册 / 「安利」自动建号）
+    流程：校验码（未用、未过期；OneBot 通道校验 qq 一致）
     → QQ 加入群成员白名单（group_members upsert，is_active=True）
     → 绑定 QQ 官方 openid（qq_openid_bindings upsert，openid ↔ 真实 QQ）
-    → 账号兜底建号（正常情况下 /auth/register 已建）
+    → 账号兜底建号（bind 码场景账号必然已存在）
     → 头像回填 + best-effort 触发 bot 拉取头像
     """
     now = utcnow()
 
-    # 1. 找码：最新一条未使用的注册绑定码
+    # 1. 找码：最新一条未使用的注册/绑定码
     vc = (
         db.query(models.VerificationCode)
         .filter(
-            models.VerificationCode.purpose == "register",
+            models.VerificationCode.purpose.in_(("register", "bind")),
             models.VerificationCode.code == payload.code,
             models.VerificationCode.used.is_(False),
         )
@@ -149,8 +152,9 @@ def verify_register(
             binding.updated_at = now
         bound_openid = True
 
-    # 5. 账号兜底建号（正常 /auth/register 已建；此处防御账号缺失导致登录不了）
+    # 5. 账号兜底建号（正常 /auth/register 已建；bind 码场景账号必然已存在）
     user = db.query(models.User).filter(models.User.qq == target_qq).first()
+    account_existed = user is not None
     if user is None:
         user = models.User(
             qq=target_qq,
@@ -185,6 +189,7 @@ def verify_register(
         "nickname": user.nickname,
         "group_id": group_id,
         "bound_openid": bound_openid,
+        "account_existed": account_existed,
         "message": "验证通过：已加入白名单" + ("，并完成 openid 绑定" if bound_openid else ""),
     }
 

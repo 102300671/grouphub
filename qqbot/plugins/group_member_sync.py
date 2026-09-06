@@ -7,7 +7,9 @@
 
 适配器：QQ 官方为主用，但成员列表 / 成员信息 API 仅 OneBot v11 提供
 （QQ 官方平台没有群成员列表接口），故本插件的拉取动作自动回落到备用
-OneBot v11（NapCat/LLOneBot 等）；仅官方适配器在线时跳过并明确告警。
+OneBot v11（NapCat/LLOneBot 等）。OneBot 未启用（未配置正向 WS 且无
+反向连接）时：定时全量同步静默跳过、手动触发直接返回明确提示；
+仅官方适配器在线时同样跳过并明确告警。
 
 OneBot v11 事件：
   - 进群 = notice.group_member_increase
@@ -49,6 +51,16 @@ def _parse_groups_arg(group_ids: Optional[str]) -> List[str]:
     if group_ids in ("all", "*"):
         return list(SYNC_GROUPS)
     return [g.strip() for g in group_ids.split(",") if g.strip()]
+
+
+def _onebot_enabled() -> bool:
+    """OneBot v11 是否启用：配置了正向 WS 地址，或已有 OneBot bot 连上（反向 WS）。
+
+    成员列表 API 仅 OneBot v11 提供；未启用时定时全量同步直接跳过（不告警刷屏）。
+    """
+    if os.getenv("ONEBOT_WS_URLS", "").strip():
+        return True
+    return bool(onebot_bots())
 
 
 # ------------------ 群成员归一化 ------------------
@@ -172,6 +184,13 @@ try:
 
     @scheduler.scheduled_job("interval", hours=FULL_SYNC_INTERVAL_HOURS, id="group_member_sync.full")
     async def _scheduled_full_sync():
+        if not _onebot_enabled():
+            # 未启用 OneBot（未配置正向 WS 且无反向连接）→ 静默跳过，不告警刷屏
+            logger.debug(
+                "[group_member_sync] OneBot v11 未启用，跳过定时全量同步"
+                "（QQ 官方适配器无群成员列表 API）"
+            )
+            return
         logger.info(f"[group_member_sync] 定时全量同步启动（每 {FULL_SYNC_INTERVAL_HOURS} 小时）")
         await full_sync()
 
@@ -275,6 +294,13 @@ async def _sync_cmd_handler(bot: Bot, event: Event):
     if not groups:
         await bot.send(event, "未配置 SYNC_GROUPS，也没传群号，无法同步。")
         return
+    if not _onebot_enabled():
+        await bot.send(
+            event,
+            "OneBot v11 未启用（QQ 官方适配器无群成员列表 API），无法同步群成员。\n"
+            "请配置 NapCat 等OneBot 实现后重试。",
+        )
+        return
     await bot.send(event, f"开始手动重同步，目标群 {groups} …")
     results = await full_sync(groups)
     lines = [
@@ -326,6 +352,14 @@ def _register_admin_routes() -> bool:
             groups = list(SYNC_GROUPS)
         if not groups:
             return {"ok": False, "message": "no groups configured"}
+        if not _onebot_enabled():
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "message": "OneBot v11 未启用（官方适配器无群成员列表 API），无法同步群成员",
+                },
+            )
         # fire-and-forget：在后台跑，不阻塞 HTTP 响应
         import asyncio
 

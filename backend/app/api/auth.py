@@ -209,6 +209,84 @@ def register_status(qq: str, db: Session = Depends(get_db)):
     return schemas.RegisterStatusOut(ok=True, pending=vc is not None)
 
 
+# ------------------- 登录后绑定 openid（老账号补绑） -------------------
+
+def _is_openid_bound(db: Session, qq: str) -> bool:
+    return (
+        db.query(models.QQOpenidBinding)
+        .filter(models.QQOpenidBinding.qq == qq)
+        .first()
+        is not None
+    )
+
+
+@router.post("/bind-code", response_model=schemas.BindCodeOut)
+def bind_code(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """登录后检查 openid 绑定状态；未绑定则生成绑定码（purpose=bind）。
+
+    老账号（OneBot 时代注册 / 群内「安利」自动建号）没有官方 openid 映射，
+    官方通道群命令无法识别其身份。登录时前端调用本接口：未绑定 → 展示绑定码，
+    用户在 QQ 里发给机器人（绑定 <码>）→ bot 调 /bot/auth/verify-register 核销绑定。
+    """
+    if _is_openid_bound(db, user.qq):
+        return schemas.BindCodeOut(ok=True, bound=True, message="已绑定，无需操作")
+
+    # 频率限制：与发码通道共用同一计数
+    now = utcnow()
+    last_sent = _code_last_sent.get(user.qq)
+    if last_sent is not None and (now - last_sent).total_seconds() < CODE_RESEND_SECONDS:
+        wait = CODE_RESEND_SECONDS - int((now - last_sent).total_seconds())
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"发送过于频繁，请 {wait} 秒后再试",
+        )
+
+    import random
+    code = f"{random.randint(0, 999999):06d}"
+    # 作废旧绑定码
+    db.query(models.VerificationCode).filter(
+        models.VerificationCode.qq == user.qq,
+        models.VerificationCode.purpose == "bind",
+        models.VerificationCode.used.is_(False),
+    ).update({models.VerificationCode.used: True}, synchronize_session=False)
+
+    db.add(models.VerificationCode(
+        qq=user.qq,
+        code=code,
+        purpose="bind",
+        used=False,
+        expires_at=now + timedelta(minutes=CODE_TTL_MINUTES),
+        created_at=now,
+    ))
+    db.commit()
+
+    _code_last_sent[user.qq] = now
+    _code_attempts.pop(user.qq, None)
+
+    return schemas.BindCodeOut(
+        ok=True,
+        bound=False,
+        code=code,
+        expires_in_minutes=CODE_TTL_MINUTES,
+        message=(
+            f"请在 {CODE_TTL_MINUTES} 分钟内把验证码发给机器人完成绑定："
+            "群内 @机器人 发送「绑定 " + code + "」"
+        ),
+    )
+
+
+@router.get("/bind/status", response_model=schemas.BindStatusOut)
+def bind_status(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """绑定状态轮询：当前用户 QQ 是否已绑定官方 openid。"""
+    return schemas.BindStatusOut(ok=True, bound=_is_openid_bound(db, user.qq))
+
+
 # ------------------- 登录（密码方式） -------------------
 
 @router.post("/login", response_model=schemas.AuthTokenOut)

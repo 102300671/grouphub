@@ -30,6 +30,21 @@ export interface RegisterStatusOut {
   pending: boolean;
 }
 
+/** 登录后绑定码响应：老账号未绑定官方 openid 时，发码让用户发给机器人 */
+export interface BindCodeOut {
+  ok: boolean;
+  bound: boolean;
+  code?: string | null;
+  expires_in_minutes?: number | null;
+  message?: string;
+}
+
+/** 登录后绑定状态轮询响应 */
+export interface BindStatusOut {
+  ok: boolean;
+  bound: boolean;
+}
+
 export interface SimpleMessageOut {
   ok?: boolean;
   message?: string;

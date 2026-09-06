@@ -13,10 +13,14 @@ export const useUserStore = defineStore("user", () => {
   const isAdmin = computed(() => current.value?.role === "admin");
   const role = computed<UserRole | "">(() => current.value?.role ?? "");
 
+  /** 登录成功后置位：MainLayout 挂载时据此检查一次 openid 绑定（老账号补绑弹窗） */
+  const pendingBindCheck = ref(false);
+
   function _apply(out: AuthTokenOut) {
     saveAuth(out);
     current.value = out.user;
     lastError.value = null;
+    pendingBindCheck.value = true;
   }
 
   async function login(qq: string, password: string): Promise<void> {
@@ -31,6 +35,15 @@ export const useUserStore = defineStore("user", () => {
 
   async function registerStatus(qq: string) {
     return authClient.registerStatus(qq);
+  }
+
+  /** 登录后绑定码：已绑定返回 bound=true；未绑定返回绑定码等用户发给机器人 */
+  async function fetchBindCode() {
+    return authClient.bindCode();
+  }
+
+  async function checkBindStatus() {
+    return authClient.bindStatus();
   }
 
   async function loginByCode(qq: string, code: string) {
@@ -78,9 +91,12 @@ export const useUserStore = defineStore("user", () => {
     isLoggedIn,
     isAdmin,
     role,
+    pendingBindCheck,
     login,
     register,
     registerStatus,
+    fetchBindCode,
+    checkBindStatus,
     loginByCode,
     logout,
     ensureMe,

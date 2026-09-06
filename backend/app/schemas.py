@@ -108,6 +108,21 @@ class RegisterStatusOut(BaseModel):
     pending: bool  # True=还有待验证的注册码（未验证）
 
 
+class BindCodeOut(BaseModel):
+    """登录后绑定码响应：老账号未绑定官方 openid 时，发码让用户发给机器人完成绑定。"""
+    ok: bool = True
+    bound: bool  # True=已绑定，无需再发码（code 为 None）
+    code: Optional[str] = None
+    expires_in_minutes: Optional[int] = None
+    message: str = ""
+
+
+class BindStatusOut(BaseModel):
+    """登录后绑定状态轮询响应。"""
+    ok: bool = True
+    bound: bool
+
+
 # =============== Bot 发给站点（验证码发送回调入参） ===============
 
 class BotSendCodeIn(BaseModel):

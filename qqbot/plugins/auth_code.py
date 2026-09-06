@@ -131,13 +131,17 @@ async def _bind_handler(bot: Bot, event: Event):
         await bot.send(event, f"⚠️ 验证失败：{data.get('message', '未知错误')}")
         return
 
-    logger.info(f"[auth_code] 注册绑定成功：qq={data.get('qq')} bound_openid={data.get('bound_openid')}")
-    await bot.send(
-        event,
-        f"✅ 验证通过！QQ {data.get('qq')} 已加入白名单"
-        + ("，并完成 openid 绑定" if data.get("bound_openid") else "")
-        + "。\n现在可以回站点用 QQ 号 + 密码登录了。",
-    )
+    logger.info(f"[auth_code] 绑定码核销成功：qq={data.get('qq')} bound_openid={data.get('bound_openid')}")
+    if data.get("account_existed"):
+        # 老账号登录后补绑 openid（bind 码）
+        await bot.send(event, f"✅ 绑定成功！QQ {data.get('qq')} 已关联机器人官方通道，回到站点即可生效。")
+    else:
+        await bot.send(
+            event,
+            f"✅ 验证通过！QQ {data.get('qq')} 已加入白名单"
+            + ("，并完成 openid 绑定" if data.get("bound_openid") else "")
+            + "。\n现在可以回站点用 QQ 号 + 密码登录了。",
+        )
 
 
 def _register_routes() -> bool:

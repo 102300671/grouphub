@@ -1,5 +1,12 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
-import type { AuthTokenOut, RegisterPendingOut, RegisterStatusOut, SimpleMessageOut } from "@/types/api";
+import type {
+  AuthTokenOut,
+  BindCodeOut,
+  BindStatusOut,
+  RegisterPendingOut,
+  RegisterStatusOut,
+  SimpleMessageOut,
+} from "@/types/api";
 
 const TOKEN_KEY = "grouphub.access_token";
 const USER_KEY = "grouphub.current_user";
@@ -100,6 +107,12 @@ export const authClient = {
       method: "GET",
       params: { qq },
     });
+  },
+  bindCode() {
+    return request<BindCodeOut>({ url: "/auth/bind-code", method: "POST" });
+  },
+  bindStatus() {
+    return request<BindStatusOut>({ url: "/auth/bind/status", method: "GET" });
   },
   login(data: { qq: string; password: string }) {
     return request<AuthTokenOut>({ url: "/auth/login", method: "POST", data });
