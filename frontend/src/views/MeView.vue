@@ -22,6 +22,8 @@ const bindCode = ref("");
 const bindExpires = ref(10);
 const bindErrorMsg = ref("");
 let bindPollTimer: ReturnType<typeof setInterval> | null = null;
+/** 打开弹窗时的绑定快照（id:updated_at），用于检测绑定是否发生变化 */
+let bindSnapshotAtStart = "";
 
 async function loadBindings() {
   bindLoading.value = true;
@@ -41,6 +43,7 @@ async function startBind() {
     const out = await user.fetchBindCode();
     bindCode.value = out.code || "";
     bindExpires.value = out.expires_in_minutes || 10;
+    bindSnapshotAtStart = bindingsSnapshot();
     bindModalVisible.value = true;
     startBindPoll();
   } catch (e) {
@@ -48,15 +51,17 @@ async function startBind() {
   }
 }
 
+function bindingsSnapshot(): string {
+  return bindings.value.map((b) => `${b.id}:${b.updated_at}`).join("|");
+}
+
 function startBindPoll() {
   stopBindPoll();
   bindPollTimer = setInterval(async () => {
     try {
-      const st = await user.checkBindStatus();
-      // 只要绑定数增加了就关闭弹窗
-      const before = bindings.value.length;
       await loadBindings();
-      if (bindings.value.length > before || st.bound) {
+      // 快照变化 = 新增了绑定或重新绑定了已有 openid（updated_at 变化）→ 关闭弹窗
+      if (bindingsSnapshot() !== bindSnapshotAtStart) {
         stopBindPoll();
         bindModalVisible.value = false;
       }
