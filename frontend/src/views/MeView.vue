@@ -526,4 +526,26 @@ h4 {
   align-items: center;
   justify-content: space-between;
 }
+@media (max-width: 720px) {
+  .profile-card {
+    gap: 12px;
+  }
+  .avatar {
+    width: 52px;
+    height: 52px;
+    font-size: 20px;
+  }
+  .grid-cards {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .binding-item {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+  .bind-code-text {
+    font-size: 22px;
+    letter-spacing: 4px;
+  }
+}
 </style>

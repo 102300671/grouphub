@@ -175,4 +175,9 @@ onMounted(loadTopics);
 .topic-title { margin: 0; font-size: 15px; }
 .topic-body { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topic-count { flex-shrink: 0; color: var(--color-primary); font-weight: 600; font-size: 13px; }
+@media (max-width: 720px) {
+  .search-input { width: 100%; }
+  .topic-item { flex-direction: column; gap: 8px; padding: 14px; }
+  .topic-count { align-self: flex-end; }
+}
 </style>

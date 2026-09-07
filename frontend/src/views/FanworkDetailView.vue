@@ -161,4 +161,11 @@ onMounted(load);
 }
 .btn-danger { color: #dc2626; border-color: #fecaca; }
 .btn-danger:hover { background: #fef2f2; }
+@media (max-width: 720px) {
+  .fw-main { padding: 16px; }
+  .fw-head { gap: 12px; }
+  .fw-cover { width: 140px; max-width: 45vw; }
+  .fw-headinfo { min-width: 0; }
+  .fw-actions { flex-wrap: wrap; }
+}
 </style>

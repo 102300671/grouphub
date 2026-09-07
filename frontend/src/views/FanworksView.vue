@@ -145,4 +145,11 @@ onMounted(load);
 .fw-title { margin: 0; font-size: 15px; line-height: 1.4; }
 .fw-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .fw-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+@media (max-width: 720px) {
+  .search-input { width: 100%; }
+  .fw-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
+  }
+  .fw-cover { height: 110px; }
+}
 </style>

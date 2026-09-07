@@ -176,5 +176,8 @@ onMounted(loadUsers);
   .filters select {
     width: auto;
   }
+  table.simple {
+    min-width: 620px;
+  }
 }
 </style>

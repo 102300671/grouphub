@@ -179,4 +179,29 @@ function isActive(to: string, exact: boolean) {
     flex-wrap: wrap;
   }
 }
+@media (max-width: 640px) {
+  .topbar {
+    height: auto;
+    min-height: 66px;
+    padding: 10px 0;
+  }
+  .topbar-inner {
+    flex-wrap: wrap;
+  }
+  .brand .subtitle {
+    display: none;
+  }
+  .brand .title {
+    font-size: 14px;
+  }
+  .topbar .row {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .layout {
+    padding-top: 14px;
+    padding-bottom: 24px;
+    gap: 14px;
+  }
+}
 </style>

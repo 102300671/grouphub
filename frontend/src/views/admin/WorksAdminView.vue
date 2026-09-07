@@ -84,4 +84,7 @@ onMounted(loadWorks);
 .btn-danger:hover { background: #b91c1c !important; }
 .btn-danger[disabled] { opacity: 0.6; cursor: not-allowed; }
 .text-sm { font-size: 12px !important; }
+@media (max-width: 720px) {
+  table.simple { min-width: 560px; }
+}
 </style>

@@ -252,9 +252,9 @@ async function submit() {
       <!-- 外部链接 -->
       <div class="form-item">
         <label>外部链接</label>
-        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-          <input v-model="newLinkSite" class="input" style="flex: 1;" placeholder="站点名（可选）" />
-          <input v-model="newLinkUrl" class="input" style="flex: 2;" placeholder="https://..." />
+        <div class="link-row">
+          <input v-model="newLinkSite" class="input" placeholder="站点名（可选）" />
+          <input v-model="newLinkUrl" class="input input-grow" placeholder="https://..." />
           <button type="button" class="btn btn-ghost" @click="addLink">+</button>
         </div>
         <div v-if="linkList.length" style="display: flex; flex-direction: column; gap: 0.25rem;">
@@ -294,11 +294,11 @@ async function submit() {
         </div>
       </div>
 
-      <!-- 外站直链（可选，可多条；不上传文件本体） -->
+      <!-- 外站直链（可选，可多条；不上传本体，站内观看/下载经后端代理拉取） -->
       <div class="form-item">
         <label>外站直链（可选，可多条；不上传本体，站内观看/下载经后端代理拉取）</label>
-        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-          <input v-model="newDirectUrl" class="input" style="flex: 1;" :placeholder="directUrlPlaceholder" @keyup.enter.prevent="addDirectUrlItem" />
+        <div class="link-row">
+          <input v-model="newDirectUrl" class="input input-grow" :placeholder="directUrlPlaceholder" @keyup.enter.prevent="addDirectUrlItem" />
           <button type="button" class="btn btn-ghost" @click="addDirectUrlItem">+</button>
         </div>
         <div v-if="directUrls.length" style="display: flex; flex-direction: column; gap: 0.25rem;">
@@ -316,3 +316,26 @@ async function submit() {
     </form>
   </div>
 </template>
+
+<style scoped>
+/* 链接输入行：窄屏时整体换行堆叠，避免挤压 */
+.link-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+.link-row .input {
+  flex: 1;
+  min-width: 0;
+}
+.link-row .input.input-grow {
+  flex: 2;
+}
+@media (max-width: 480px) {
+  .link-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+</style>

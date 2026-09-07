@@ -798,4 +798,10 @@ h4 { font-weight: 600; }
   .rel-stat { grid-template-columns: 1fr; }
   .file-row { flex-direction: column; align-items: flex-start; }
 }
+@media (max-width: 720px) {
+  .detail { padding: 14px; }
+  .cover { width: 84px; height: 112px; font-size: 32px; }
+  .stat-num { font-size: 22px; }
+  .link-list li { flex-wrap: wrap; align-items: flex-start; }
+}
 </style>

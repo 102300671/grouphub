@@ -229,4 +229,13 @@ async function onCodeSubmit() {
   justify-content: space-between;
   gap: 12px;
 }
+@media (max-width: 480px) {
+  .auth-page {
+    padding: 24px 14px;
+  }
+  .links {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
 </style>

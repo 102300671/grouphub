@@ -96,13 +96,17 @@ onBeforeUnmount(stopBindPoll);
         </nav>
 
         <div class="actions">
-          <span v-if="user.isLoggedIn" class="text-sm muted">你好，{{ user.current?.nickname }}</span>
-          <span v-if="user.role === 'admin'" class="badge badge-admin">管理员</span>
-          <span v-else-if="user.role === 'member'" class="badge badge-member">群友</span>
+          <span v-if="user.isLoggedIn" class="text-sm muted m-btn-desktop">你好，{{ user.current?.nickname }}</span>
+          <span v-if="user.role === 'admin'" class="badge badge-admin m-btn-desktop">管理员</span>
+          <span v-else-if="user.role === 'member'" class="badge badge-member m-btn-desktop">群友</span>
 
           <!-- 核心：只有管理员才看见「切换到管理模式」按钮；普通用户完全不渲染，界面一致 -->
-          <button v-if="user.isAdmin" class="btn btn-admin" @click="toggleAdminMode">
+          <button v-if="user.isAdmin" class="btn btn-admin m-btn-desktop" @click="toggleAdminMode">
             🛠 切换到管理模式
+          </button>
+          <!-- 移动端紧凑版管理入口 -->
+          <button v-if="user.isAdmin" class="btn btn-admin m-btn-mobile" title="切换到管理模式" @click="toggleAdminMode">
+            🛠
           </button>
 
           <button v-if="user.isLoggedIn" class="btn btn-ghost" @click="onLogout">退出</button>
@@ -118,6 +122,25 @@ onBeforeUnmount(stopBindPoll);
     <footer class="container footer muted text-sm">
       🌸 © 群资源站 · 私域百合资源共享空间 · 由 QQ 群成员白名单保障权限
     </footer>
+
+    <!-- 移动端底部 Tab 导航（仅 ≤720px 显示） -->
+    <nav class="tabbar">
+      <RouterLink to="/" active-class="active" exact-active-class="active">
+        <span class="tab-icon">🏠</span>首页
+      </RouterLink>
+      <RouterLink to="/works" active-class="active">
+        <span class="tab-icon">📚</span>作品
+      </RouterLink>
+      <RouterLink to="/fanworks" active-class="active">
+        <span class="tab-icon">🌸</span>同人
+      </RouterLink>
+      <RouterLink to="/forum" active-class="active">
+        <span class="tab-icon">💬</span>论坛
+      </RouterLink>
+      <RouterLink to="/me" active-class="active">
+        <span class="tab-icon">👤</span>我的
+      </RouterLink>
+    </nav>
 
     <!-- 老账号 openid 补绑弹窗：把验证码发给机器人即可完成绑定，绑定后自动关闭 -->
     <div v-if="showBindModal" class="modal-mask" @click.self="dismissBind">
@@ -227,6 +250,24 @@ onBeforeUnmount(stopBindPoll);
 @media (max-width: 720px) {
   .nav-links {
     display: none;
+  }
+  .navbar {
+    height: 54px;
+  }
+  .brand {
+    font-size: 15px;
+  }
+  .content {
+    padding-top: 16px;
+    /* 给固定底部 Tab 留出空间 */
+    padding-bottom: 72px;
+  }
+  .footer {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+  .bind-code-text {
+    font-size: 22px;
+    letter-spacing: 4px;
   }
 }
 

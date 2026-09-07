@@ -290,4 +290,9 @@ onMounted(async () => {
   font-size: 13px;
 }
 .form-actions { display: flex; gap: 10px; margin-top: 16px; }
+@media (max-width: 720px) {
+  .form-card { padding: 14px; }
+  .form-actions { flex-wrap: wrap; }
+  .form-actions .btn { flex: 1; }
+}
 </style>

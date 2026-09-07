@@ -113,6 +113,11 @@ onMounted(load);
 @media (max-width: 720px) {
   .hero {
     grid-template-columns: 1fr;
+    padding: 20px;
+    gap: 12px;
+  }
+  .hero-title {
+    font-size: 26px;
   }
   .hero-illu {
     font-size: 64px;

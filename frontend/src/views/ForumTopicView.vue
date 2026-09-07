@@ -158,4 +158,9 @@ onMounted(load);
 .post-nick { font-weight: 600; font-size: 14px; }
 .post-body { margin: 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .reply-form { display: flex; flex-direction: column; }
+@media (max-width: 720px) {
+  .topic-main { padding: 16px; }
+  .post-item { padding: 12px; }
+  .post-head { flex-wrap: wrap; gap: 6px; }
+}
 </style>

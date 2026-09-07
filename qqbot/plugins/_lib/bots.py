@@ -107,6 +107,58 @@ async def resolve_openid_qq(openid: str, openid_type: str = "group") -> Optional
     return qq
 
 
+# ------------------ QQ 官方 openapi 通用请求 ------------------
+
+async def qq_openapi_request(
+    bot: Bot,
+    method: str,
+    path: str,
+    *,
+    params: Optional[Dict[str, Any]] = None,
+    json_body: Optional[Dict[str, Any]] = None,
+    timeout: float = 10.0,
+) -> Any:
+    """直调 QQ 官方 openapi（适配器未封装的接口，如 /v2/groups/.../info、/v2/panels）。
+
+    鉴权：bot.get_access_token()（复用适配器的 token 缓存与自动刷新），
+    Header `Authorization: QQBot {access_token}`。
+    仅支持 QQ 官方适配器 bot；返回解析后的 JSON（无响应体时返回 None）；
+    非 2xx 抛 RuntimeError（带官方错误码与描述）。
+    """
+    if not is_qq_official(bot):
+        raise TypeError("qq_openapi_request 仅支持 QQ 官方适配器 bot")
+
+    import httpx
+
+    token = await bot.get_access_token()
+    api_base = str(bot.adapter.get_api_base()).rstrip("/")
+    url = f"{api_base}{path}"
+    headers = {"Authorization": f"QQBot {token}"}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.request(
+            method.upper(), url, params=params, json=json_body, headers=headers
+        )
+    if resp.status_code >= 400:
+        detail = resp.text[:200]
+        code = ""
+        try:
+            body = resp.json()
+            detail = body.get("message") or body.get("Message") or detail
+            code = str(body.get("code") or body.get("Code") or "")
+        except Exception:  # noqa: BLE001
+            pass
+        prefix = f"[{code}] " if code else ""
+        raise RuntimeError(
+            f"QQ openapi {method.upper()} {path} 失败：HTTP {resp.status_code} {prefix}{detail}"
+        )
+    if not resp.content:
+        return None
+    try:
+        return resp.json()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ------------------ QQ 官方通道：群 openid → 群名称 ------------------
 
 _group_name_cache: Dict[str, Tuple[float, Optional[str]]] = {}
@@ -116,8 +168,8 @@ async def get_group_name_by_openid(bot: Bot, group_openid: str) -> Optional[str]
     """QQ 官方通道查群名称（openapi GET /v2/groups/{group_openid}/info）。
 
     适配器（nonebot-adapter-qq 1.7.x）未封装该 API，call_api 会抛 ApiNotAvailable，
-    因此用 bot.get_access_token() + httpx 直调 openapi（与官方文档一致，
-    需机器人有接口权限；失败返回 None 并记 debug 日志）。结果缓存 1 小时。
+    因此走 qq_openapi_request 直调（需机器人有接口权限；失败返回 None 并记 debug
+    日志）。结果缓存 1 小时。
     """
     now = time.monotonic()
     cached = _group_name_cache.get(group_openid)
@@ -137,17 +189,10 @@ async def get_group_name_by_openid(bot: Bot, group_openid: str) -> Optional[str]
     # 直调 openapi
     if not name:
         try:
-            import httpx
-
-            token = await bot.get_access_token()
-            api_base = str(bot.adapter.get_api_base()).rstrip("/")
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    f"{api_base}/v2/groups/{group_openid}/info",
-                    headers={"Authorization": f"QQBot {token}"},
-                )
-                resp.raise_for_status()
-                name = resp.json().get("group_name") or None
+            data = await qq_openapi_request(
+                bot, "GET", f"/v2/groups/{group_openid}/info"
+            )
+            name = (data or {}).get("group_name") or None
         except Exception as exc:  # noqa: BLE001
             logger.debug(f"[bots] 官方通道查群名称失败：openid={group_openid} err={exc}")
 
@@ -164,5 +209,6 @@ __all__ = [
     "onebot_bots",
     "send_private",
     "resolve_openid_qq",
+    "qq_openapi_request",
     "get_group_name_by_openid",
 ]

@@ -100,4 +100,9 @@ onMounted(loadSummary);
 .stat-card .note {
   margin-top: 10px;
 }
+@media (max-width: 720px) {
+  .stat-card .value {
+    font-size: 22px;
+  }
+}
 </style>

@@ -302,4 +302,17 @@ onBeforeUnmount(stopPolling);
   align-items: center;
   justify-content: space-between;
 }
+@media (max-width: 480px) {
+  .auth-page {
+    padding: 24px 14px;
+  }
+  .code-text {
+    font-size: 24px;
+    letter-spacing: 4px;
+  }
+  .wait-foot {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
 </style>

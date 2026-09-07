@@ -130,4 +130,9 @@ onMounted(() => {
 .title { margin: 0; font-size: 15px; line-height: 1.4; }
 .synopsis { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .meta { margin-top: auto; }
+@media (max-width: 720px) {
+  .search-input { width: 100%; }
+  .work-card { padding: 12px; gap: 10px; }
+  .cover { width: 56px; height: 76px; font-size: 20px; }
+}
 </style>
