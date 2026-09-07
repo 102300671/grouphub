@@ -46,6 +46,16 @@ export const useUserStore = defineStore("user", () => {
     return authClient.bindStatus();
   }
 
+  /** 获取当前用户的所有 openid 绑定列表 */
+  async function listBindings() {
+    return authClient.listBindings();
+  }
+
+  /** 解绑指定 openid */
+  async function deleteBinding(bindingId: number) {
+    return authClient.deleteBinding(bindingId);
+  }
+
   async function loginByCode(qq: string, code: string) {
     const out = await authClient.confirmCode({ qq, code });
     _apply(out);
@@ -97,6 +107,8 @@ export const useUserStore = defineStore("user", () => {
     registerStatus,
     fetchBindCode,
     checkBindStatus,
+    listBindings,
+    deleteBinding,
     loginByCode,
     logout,
     ensureMe,

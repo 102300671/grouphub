@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useUserStore } from "@/stores/user";
 import { authClient, extractErrMsg } from "@/api/http";
-import type { Work } from "@/types/api";
+import type { OpenidBindingItem, Work } from "@/types/api";
 
 const user = useUserStore();
 const tip = ref("");
@@ -14,6 +14,89 @@ const uploadedWorks = ref<Work[]>([]);
 const supportedWorks = ref<Work[]>([]);
 const recommendedWorks = ref<Work[]>([]);
 
+// openid 绑定管理
+const bindings = ref<OpenidBindingItem[]>([]);
+const bindLoading = ref(false);
+const bindModalVisible = ref(false);
+const bindCode = ref("");
+const bindExpires = ref(10);
+const bindErrorMsg = ref("");
+let bindPollTimer: ReturnType<typeof setInterval> | null = null;
+
+async function loadBindings() {
+  bindLoading.value = true;
+  try {
+    const res = await user.listBindings();
+    bindings.value = res.items;
+  } catch {
+    // 忽略
+  } finally {
+    bindLoading.value = false;
+  }
+}
+
+async function startBind() {
+  bindErrorMsg.value = "";
+  try {
+    const out = await user.fetchBindCode();
+    bindCode.value = out.code || "";
+    bindExpires.value = out.expires_in_minutes || 10;
+    bindModalVisible.value = true;
+    startBindPoll();
+  } catch (e) {
+    bindErrorMsg.value = extractErrMsg(e, "获取验证码失败");
+  }
+}
+
+function startBindPoll() {
+  stopBindPoll();
+  bindPollTimer = setInterval(async () => {
+    try {
+      const st = await user.checkBindStatus();
+      // 只要绑定数增加了就关闭弹窗
+      const before = bindings.value.length;
+      await loadBindings();
+      if (bindings.value.length > before || st.bound) {
+        stopBindPoll();
+        bindModalVisible.value = false;
+      }
+    } catch {
+      // 轮询失败忽略
+    }
+  }, 3000);
+}
+
+function stopBindPoll() {
+  if (bindPollTimer) {
+    clearInterval(bindPollTimer);
+    bindPollTimer = null;
+  }
+}
+
+function dismissBindModal() {
+  stopBindPoll();
+  bindModalVisible.value = false;
+}
+
+async function deleteBindingById(id: number) {
+  if (!confirm("确定要解绑这个 openid 吗？解绑后该身份将无法使用群内机器人命令。")) return;
+  try {
+    await user.deleteBinding(id);
+    await loadBindings();
+  } catch (e) {
+    bindErrorMsg.value = extractErrMsg(e, "解绑失败");
+  }
+}
+
+function maskOpenid(openid: string): string {
+  if (openid.length <= 8) return openid;
+  return openid.slice(0, 4) + "****" + openid.slice(-4);
+}
+
+function copyBindCode() {
+  navigator.clipboard?.writeText(bindCode.value).catch(() => {});
+}
+
 async function loadUserWorks() {
   loading.value = true;
   errorMsg.value = "";
@@ -22,7 +105,7 @@ async function loadUserWorks() {
     tip.value = me?.role === "admin"
       ? "你是管理员：右上角可随时切换到「管理模式」做站点管理。"
       : "欢迎回来！这里汇总了你参与的所有作品。";
-    
+
     // 加载用户参与的作品
     const res = await authClient.userWorks();
     if (res.ok) {
@@ -47,7 +130,11 @@ async function loadUserWorks() {
   }
 }
 
-onMounted(loadUserWorks);
+onMounted(() => {
+  loadUserWorks();
+  loadBindings();
+});
+onBeforeUnmount(stopBindPoll);
 </script>
 
 <template>
@@ -66,6 +153,59 @@ onMounted(loadUserWorks);
         <div class="muted text-sm">QQ：{{ user.current?.qq }} · 注册时间 {{ user.current?.created_at?.slice(0, 10) ?? "—" }}</div>
         <div class="mt-4">
           <div class="alert alert-info" v-if="tip">{{ tip }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- openid 绑定管理 -->
+    <section class="mt-8">
+      <div class="section-head">
+        <h3>🔗 机器人身份绑定</h3>
+        <button class="btn btn-primary btn-sm" @click="startBind" :disabled="bindLoading">
+          {{ bindings.length > 0 ? '+ 添加 / 重新绑定' : '绑定机器人' }}
+        </button>
+      </div>
+      <p class="muted text-sm">
+        绑定后，你在 QQ 群里 @机器人 发送命令时，机器人能识别你的身份。一个 QQ 可绑定多个 openid（如不同群的身份）。
+      </p>
+      <div v-if="bindErrorMsg" class="alert alert-error mt-2">{{ bindErrorMsg }}</div>
+      <div v-if="bindLoading" class="card mt-2"><div class="muted text-sm" style="text-align:center;padding:16px">加载中…</div></div>
+      <div v-else-if="bindings.length === 0" class="card mt-2">
+        <div class="text-sm" style="text-align:center;padding:16px">
+          <p>尚未绑定任何机器人身份。</p>
+          <p class="muted mt-2">点击上方按钮开始绑定，把验证码发给机器人即可。</p>
+        </div>
+      </div>
+      <div v-else class="binding-list mt-2">
+        <div v-for="b in bindings" :key="b.id" class="card binding-item">
+          <div class="binding-info">
+            <span class="binding-openid">{{ maskOpenid(b.openid) }}</span>
+            <span class="badge badge-muted">{{ b.openid_type === 'c2c' ? '私聊' : '群聊' }}</span>
+            <span class="muted text-sm">绑定于 {{ b.created_at.slice(0, 10) }}</span>
+          </div>
+          <button class="btn btn-ghost btn-sm" @click="deleteBindingById(b.id)">解绑</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 绑定码弹窗 -->
+    <div v-if="bindModalVisible" class="modal-mask" @click.self="dismissBindModal">
+      <div class="modal card">
+        <div class="modal-head">
+          <h3>🔗 绑定机器人身份</h3>
+        </div>
+        <p class="muted text-sm">
+          把下方验证码发给机器人即可完成绑定：
+        </p>
+        <div class="bind-code-box">
+          <span class="bind-code-text">{{ bindCode }}</span>
+          <button class="btn btn-ghost btn-sm" type="button" @click="copyBindCode">复制</button>
+        </div>
+        <div class="bind-cmd-box">@机器人 绑定 {{ bindCode }}</div>
+        <p class="muted text-sm">在群里 @机器人 发送上方命令（或私聊机器人），本页会自动检测，绑定成功后弹窗自动关闭。</p>
+        <div class="modal-foot">
+          <span class="muted text-sm">有效期 {{ bindExpires }} 分钟</span>
+          <button class="btn btn-ghost btn-sm" type="button" @click="dismissBindModal">取消</button>
         </div>
       </div>
     </div>
@@ -277,5 +417,88 @@ h4 {
   font-size: 16px;
   font-weight: 600;
   color: var(--color-text);
+}
+
+/* ---------- 绑定管理 ---------- */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.binding-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.binding-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.binding-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.binding-openid {
+  font-family: var(--font-mono, monospace);
+  font-size: 14px;
+}
+
+/* ---------- 绑定码弹窗 ---------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal {
+  width: 100%;
+  max-width: 420px;
+  box-shadow: var(--shadow-md);
+}
+.modal-head h3 {
+  margin: 0 0 8px;
+}
+.bind-code-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 8px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(79, 70, 229, 0.08);
+  border: 1px dashed rgba(79, 70, 229, 0.4);
+}
+.bind-code-text {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  font-family: var(--font-mono, monospace);
+}
+.bind-cmd-box {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--color-bg-soft, #f5f5f7);
+  border: 1px solid var(--color-border, #e5e5ea);
+  font-family: var(--font-mono, monospace);
+  margin-bottom: 8px;
+  user-select: all;
+}
+.modal-foot {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 </style>

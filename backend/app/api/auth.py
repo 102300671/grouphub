@@ -225,15 +225,12 @@ def bind_code(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
-    """登录后检查 openid 绑定状态；未绑定则生成绑定码（purpose=bind）。
+    """生成绑定码，让用户把码发给机器人完成 openid 绑定。
 
-    老账号（OneBot 时代注册 / 群内「安利」自动建号）没有官方 openid 映射，
-    官方通道群命令无法识别其身份。登录时前端调用本接口：未绑定 → 展示绑定码，
-    用户在 QQ 里发给机器人（绑定 <码>）→ bot 调 /bot/auth/verify-register 核销绑定。
+    用途：①老账号登录后补绑（MainLayout 自动弹窗触发）；
+    ②「我的」页面主动添加 / 重新绑定 openid（即使已有绑定也允许发新码，
+    bot 核销时会把新 openid 绑到当前 QQ）。
     """
-    if _is_openid_bound(db, user.qq):
-        return schemas.BindCodeOut(ok=True, bound=True, message="已绑定，无需操作")
-
     # 频率限制：与发码通道共用同一计数
     now = utcnow()
     last_sent = _code_last_sent.get(user.qq)
@@ -266,9 +263,10 @@ def bind_code(
     _code_last_sent[user.qq] = now
     _code_attempts.pop(user.qq, None)
 
+    already_bound = _is_openid_bound(db, user.qq)
     return schemas.BindCodeOut(
         ok=True,
-        bound=False,
+        bound=already_bound,
         code=code,
         expires_in_minutes=CODE_TTL_MINUTES,
         message=(
@@ -285,6 +283,56 @@ def bind_status(
 ):
     """绑定状态轮询：当前用户 QQ 是否已绑定官方 openid。"""
     return schemas.BindStatusOut(ok=True, bound=_is_openid_bound(db, user.qq))
+
+
+@router.get("/bindings", response_model=schemas.BindingsListOut)
+def list_bindings(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """当前用户的所有 openid 绑定列表（「我的」页面绑定管理用）。"""
+    rows = (
+        db.query(models.QQOpenidBinding)
+        .filter(models.QQOpenidBinding.qq == user.qq)
+        .order_by(models.QQOpenidBinding.created_at.asc())
+        .all()
+    )
+    return schemas.BindingsListOut(
+        ok=True,
+        count=len(rows),
+        items=[
+            schemas.OpenidBindingItem(
+                id=r.id,
+                openid=r.openid,
+                openid_type=r.openid_type,
+                created_at=r.created_at.isoformat() if r.created_at else "",
+                updated_at=r.updated_at.isoformat() if r.updated_at else "",
+            )
+            for r in rows
+        ],
+    )
+
+
+@router.delete("/bindings/{binding_id}", response_model=schemas.SimpleMessageOut)
+def delete_binding(
+    binding_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """解绑指定 openid 绑定（仅限本人操作）。"""
+    row = (
+        db.query(models.QQOpenidBinding)
+        .filter(
+            models.QQOpenidBinding.id == binding_id,
+            models.QQOpenidBinding.qq == user.qq,
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="绑定记录不存在")
+    db.delete(row)
+    db.commit()
+    return schemas.SimpleMessageOut(ok=True, message="已解绑")
 
 
 # ------------------- 登录（密码方式） -------------------

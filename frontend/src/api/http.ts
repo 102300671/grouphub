@@ -3,6 +3,7 @@ import type {
   AuthTokenOut,
   BindCodeOut,
   BindStatusOut,
+  BindingsListOut,
   RegisterPendingOut,
   RegisterStatusOut,
   SimpleMessageOut,
@@ -113,6 +114,15 @@ export const authClient = {
   },
   bindStatus() {
     return request<BindStatusOut>({ url: "/auth/bind/status", method: "GET" });
+  },
+  listBindings() {
+    return request<BindingsListOut>({ url: "/auth/bindings", method: "GET" });
+  },
+  deleteBinding(bindingId: number) {
+    return request<SimpleMessageOut>({
+      url: `/auth/bindings/${bindingId}`,
+      method: "DELETE",
+    });
   },
   login(data: { qq: string; password: string }) {
     return request<AuthTokenOut>({ url: "/auth/login", method: "POST", data });

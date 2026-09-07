@@ -123,6 +123,22 @@ class BindStatusOut(BaseModel):
     bound: bool
 
 
+class OpenidBindingItem(BaseModel):
+    """一条 openid 绑定记录。"""
+    id: int
+    openid: str
+    openid_type: str
+    created_at: str
+    updated_at: str
+
+
+class BindingsListOut(BaseModel):
+    """当前用户的所有 openid 绑定列表。"""
+    ok: bool = True
+    items: list[OpenidBindingItem]
+    count: int
+
+
 # =============== Bot 发给站点（验证码发送回调入参） ===============
 
 class BotSendCodeIn(BaseModel):

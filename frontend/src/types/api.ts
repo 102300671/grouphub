@@ -45,6 +45,22 @@ export interface BindStatusOut {
   bound: boolean;
 }
 
+/** 一条 openid 绑定记录 */
+export interface OpenidBindingItem {
+  id: number;
+  openid: string;
+  openid_type: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 当前用户的所有 openid 绑定列表 */
+export interface BindingsListOut {
+  ok: boolean;
+  items: OpenidBindingItem[];
+  count: number;
+}
+
 export interface SimpleMessageOut {
   ok?: boolean;
   message?: string;
