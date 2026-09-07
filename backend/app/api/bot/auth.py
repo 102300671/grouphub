@@ -144,11 +144,20 @@ def verify_register(
         if binding is None:
             db.add(models.QQOpenidBinding(
                 qq=target_qq, openid=openid, openid_type=openid_type,
+                group_id=group_id if openid_type == "group" else None,
+                group_name=(payload.group_name or None),
                 created_at=now, updated_at=now,
             ))
         else:
             binding.qq = target_qq
             binding.openid_type = openid_type
+            if openid_type == "group":
+                binding.group_id = group_id
+            else:
+                binding.group_id = None
+            # 群名称：新值优先，没有新值时保留旧值
+            if payload.group_name:
+                binding.group_name = payload.group_name
             binding.updated_at = now
         bound_openid = True
 

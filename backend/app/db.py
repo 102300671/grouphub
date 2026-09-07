@@ -70,6 +70,10 @@ def _migrate_sqlite(engine) -> None:
         "verification_codes": {
             "purpose": "VARCHAR(20) NOT NULL DEFAULT 'login'",
         },
+        "qq_openid_bindings": {
+            "group_id": "VARCHAR(30)",
+            "group_name": "VARCHAR(100)",
+        },
     }
     with engine.connect() as conn:
         for table, columns in wanted.items():

@@ -154,6 +154,8 @@ class QQOpenidBinding(Base):
     qq = Column(String(20), index=True, nullable=False)
     openid = Column(String(128), nullable=False)
     openid_type = Column(String(10), nullable=False, default="group", server_default="group")  # group | c2c
+    group_id = Column(String(30), nullable=True)  # 绑定时的群号（c2c 为空）
+    group_name = Column(String(100), nullable=True)  # 绑定时的群名称（OneBot 通道可查；官方通道为空）
     created_at = Column(DateTime, default=_now, nullable=False)
     updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
 

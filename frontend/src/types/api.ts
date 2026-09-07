@@ -50,6 +50,8 @@ export interface OpenidBindingItem {
   id: number;
   openid: string;
   openid_type: string;
+  group_id?: string | null;
+  group_name?: string | null;
   created_at: string;
   updated_at: string;
 }

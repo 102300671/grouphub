@@ -180,7 +180,7 @@ onBeforeUnmount(stopBindPoll);
         <div v-for="b in bindings" :key="b.id" class="card binding-item">
           <div class="binding-info">
             <span class="binding-openid">{{ maskOpenid(b.openid) }}</span>
-            <span class="badge badge-muted">{{ b.openid_type === 'c2c' ? '私聊' : '群聊' }}</span>
+            <span class="badge badge-muted">{{ b.openid_type === 'c2c' ? '私聊' : (b.group_name || (b.group_id ? `群 ${b.group_id}` : '群聊')) }}</span>
             <span class="muted text-sm">绑定于 {{ b.created_at.slice(0, 10) }}</span>
           </div>
           <button class="btn btn-ghost btn-sm" @click="deleteBindingById(b.id)">解绑</button>

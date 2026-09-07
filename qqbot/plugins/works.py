@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 from nonebot import logger, on_command
@@ -116,7 +117,7 @@ async def _search_handler(bot: Bot, event: Event):
         return
     body = _fmt_works(items)
     if items:
-        body += f"\n详情见站点：{SITE_BASE_URL}/works?keyword={keyword}"
+        body += f"\n详情见站点：{SITE_BASE_URL}/works?keyword={quote_plus(keyword)}"
     await bot.send(event, f"🔍 「{keyword}」搜索结果：\n{body}")
 
 

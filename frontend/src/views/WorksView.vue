@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import { extractErrMsg, request } from "@/api/http";
 import type { Work, WorkListResponse } from "@/types/api";
 
+const route = useRoute();
 const works = ref<Work[]>([]);
 const loading = ref(false);
 const errorMsg = ref("");
@@ -46,7 +47,14 @@ async function loadWorks() {
   }
 }
 
-onMounted(loadWorks);
+onMounted(() => {
+  // 支持从 URL query 读取搜索词（机器人消息里的链接跳转）
+  const kw = route.query.keyword;
+  if (typeof kw === "string" && kw.trim()) {
+    keyword.value = kw.trim();
+  }
+  loadWorks();
+});
 </script>
 
 <template>
