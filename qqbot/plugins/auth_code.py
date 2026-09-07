@@ -38,7 +38,7 @@ from nonebot import get_driver, logger, on_command
 from nonebot.adapters import Bot, Event
 from nonebot.rule import to_me
 
-from ._lib.bots import is_onebot_v11, send_private
+from ._lib.bots import get_group_name_by_openid, is_onebot_v11, send_private
 from ._lib.client import backend_client
 from .group_member_sync import SYNC_GROUPS
 
@@ -80,6 +80,7 @@ async def _bind_handler(bot: Bot, event: Event):
     openid: str | None = None
     openid_type: str | None = None
     group_id: str | None = str(getattr(event, "group_id", None) or "") or None
+    group_openid: str | None = None
     group_name: str | None = None
     nickname_in_group = None
     if is_onebot_v11(bot):
@@ -96,16 +97,12 @@ async def _bind_handler(bot: Bot, event: Event):
                 logger.debug(f"[auth_code] 查群名称失败（OneBot）：{exc}")
     else:  # QQ 官方：只有 openid，群号用 SYNC_GROUPS 兜底
         openid = event.get_user_id() or None
-        group_openid = getattr(event, "group_openid", None) or None
+        group_openid = str(getattr(event, "group_openid", None) or "") or None
         openid_type = "group" if group_openid else "c2c"
         group_id = group_id or (SYNC_GROUPS[0] if SYNC_GROUPS else None)
-        # 官方适配器 best-effort 查群名称（需白名单权限，失败留空）
+        # 官方通道 best-effort 查群名称（openapi /v2/groups/{openid}/info，需接口权限，失败留空）
         if group_openid:
-            try:
-                info = await bot.call_api("get_group_info", group_openid=group_openid)
-                group_name = getattr(info, "group_name", None) or (info.get("group_name") if isinstance(info, dict) else None)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug(f"[auth_code] 查群名称失败（官方）：{exc}")
+            group_name = await get_group_name_by_openid(bot, group_openid)
         # 官方适配器拿不到群名片，只有 QQ 用户名：用户站点留空昵称时用它兜底
         nickname_in_group = getattr(getattr(event, "author", None), "username", None)
 
@@ -123,6 +120,8 @@ async def _bind_handler(bot: Bot, event: Event):
         payload["qq"] = qq
     if openid:
         payload.update({"openid": openid, "openid_type": openid_type})
+    if group_openid:
+        payload["group_openid"] = group_openid
     if group_id:
         payload["group_id"] = group_id
     if group_name:

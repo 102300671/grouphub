@@ -107,6 +107,55 @@ async def resolve_openid_qq(openid: str, openid_type: str = "group") -> Optional
     return qq
 
 
+# ------------------ QQ 官方通道：群 openid → 群名称 ------------------
+
+_group_name_cache: Dict[str, Tuple[float, Optional[str]]] = {}
+
+
+async def get_group_name_by_openid(bot: Bot, group_openid: str) -> Optional[str]:
+    """QQ 官方通道查群名称（openapi GET /v2/groups/{group_openid}/info）。
+
+    适配器（nonebot-adapter-qq 1.7.x）未封装该 API，call_api 会抛 ApiNotAvailable，
+    因此用 bot.get_access_token() + httpx 直调 openapi（与官方文档一致，
+    需机器人有接口权限；失败返回 None 并记 debug 日志）。结果缓存 1 小时。
+    """
+    now = time.monotonic()
+    cached = _group_name_cache.get(group_openid)
+    if cached is not None and now - cached[0] < 3600.0:
+        return cached[1]
+
+    name: Optional[str] = None
+    # 先试适配器封装（未来版本支持时自动生效）
+    try:
+        info = await bot.call_api("get_group_info", group_openid=group_openid)
+        name = getattr(info, "group_name", None) or (
+            info.get("group_name") if isinstance(info, dict) else None
+        )
+    except Exception:  # noqa: BLE001（当前版本必抛 ApiNotAvailable，忽略）
+        pass
+
+    # 直调 openapi
+    if not name:
+        try:
+            import httpx
+
+            token = await bot.get_access_token()
+            api_base = str(bot.adapter.get_api_base()).rstrip("/")
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{api_base}/v2/groups/{group_openid}/info",
+                    headers={"Authorization": f"QQBot {token}"},
+                )
+                resp.raise_for_status()
+                name = resp.json().get("group_name") or None
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[bots] 官方通道查群名称失败：openid={group_openid} err={exc}")
+
+    name = str(name) if name else None
+    _group_name_cache[group_openid] = (now, name)
+    return name
+
+
 __all__ = [
     "is_qq_official",
     "is_onebot_v11",
@@ -115,4 +164,5 @@ __all__ = [
     "onebot_bots",
     "send_private",
     "resolve_openid_qq",
+    "get_group_name_by_openid",
 ]

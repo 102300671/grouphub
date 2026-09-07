@@ -72,6 +72,7 @@ def _migrate_sqlite(engine) -> None:
         },
         "qq_openid_bindings": {
             "group_id": "VARCHAR(30)",
+            "group_openid": "VARCHAR(128)",
             "group_name": "VARCHAR(100)",
         },
     }

@@ -93,6 +93,17 @@ function maskOpenid(openid: string): string {
   return openid.slice(0, 4) + "****" + openid.slice(-4);
 }
 
+/** 点击群名 badge 切换显示 group_openid（官方适配器拿不到群号，只有 group_openid） */
+const showGroupOpenidId = ref<number | null>(null);
+function toggleGroupOpenid(b: OpenidBindingItem) {
+  if (b.openid_type !== "group" || !b.group_openid) return;
+  showGroupOpenidId.value = showGroupOpenidId.value === b.id ? null : b.id;
+}
+function groupLabel(b: OpenidBindingItem): string {
+  if (showGroupOpenidId.value === b.id) return b.group_openid || "";
+  return b.group_name || (b.group_id ? `群 ${b.group_id}` : "群聊");
+}
+
 function copyBindCode() {
   navigator.clipboard?.writeText(bindCode.value).catch(() => {});
 }
@@ -180,7 +191,12 @@ onBeforeUnmount(stopBindPoll);
         <div v-for="b in bindings" :key="b.id" class="card binding-item">
           <div class="binding-info">
             <span class="binding-openid">{{ maskOpenid(b.openid) }}</span>
-            <span class="badge badge-muted">{{ b.openid_type === 'c2c' ? '私聊' : (b.group_name || (b.group_id ? `群 ${b.group_id}` : '群聊')) }}</span>
+            <span
+              class="badge badge-muted"
+              :class="{ 'badge-clickable': b.openid_type === 'group' && b.group_openid }"
+              :title="b.openid_type === 'group' && b.group_openid ? '点击查看群 openid' : ''"
+              @click="toggleGroupOpenid(b)"
+            >{{ groupLabel(b) }}</span>
             <span class="muted text-sm">绑定于 {{ b.created_at.slice(0, 10) }}</span>
           </div>
           <button class="btn btn-ghost btn-sm" @click="deleteBindingById(b.id)">解绑</button>
@@ -448,6 +464,10 @@ h4 {
 .binding-openid {
   font-family: var(--font-mono, monospace);
   font-size: 14px;
+}
+.badge-clickable {
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
 }
 
 /* ---------- 绑定码弹窗 ---------- */

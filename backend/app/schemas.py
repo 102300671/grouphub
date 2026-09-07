@@ -129,6 +129,7 @@ class OpenidBindingItem(BaseModel):
     openid: str
     openid_type: str
     group_id: Optional[str] = None
+    group_openid: Optional[str] = None
     group_name: Optional[str] = None
     created_at: str
     updated_at: str
@@ -162,6 +163,7 @@ class BotVerifyRegisterIn(BaseModel):
     openid: Optional[str] = None      # QQ 官方通道提供
     openid_type: Optional[str] = None  # group | c2c
     group_id: Optional[str] = None    # 白名单归属群（拿不到时由 bot 传 SYNC_GROUPS 兜底）
+    group_openid: Optional[str] = None  # 群 openid（QQ 官方通道事件自带）
     group_name: Optional[str] = None   # 群名称（OneBot 通道可查）
     nickname_in_group: Optional[str] = None
 

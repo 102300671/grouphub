@@ -145,6 +145,7 @@ def verify_register(
             db.add(models.QQOpenidBinding(
                 qq=target_qq, openid=openid, openid_type=openid_type,
                 group_id=group_id if openid_type == "group" else None,
+                group_openid=(payload.group_openid or None) if openid_type == "group" else None,
                 group_name=(payload.group_name or None),
                 created_at=now, updated_at=now,
             ))
@@ -153,9 +154,12 @@ def verify_register(
             binding.openid_type = openid_type
             if openid_type == "group":
                 binding.group_id = group_id
+                # 群 openid / 群名称：新值优先，没有新值时保留旧值
+                if payload.group_openid:
+                    binding.group_openid = payload.group_openid
             else:
                 binding.group_id = None
-            # 群名称：新值优先，没有新值时保留旧值
+                binding.group_openid = None
             if payload.group_name:
                 binding.group_name = payload.group_name
             binding.updated_at = now

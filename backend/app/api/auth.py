@@ -306,6 +306,7 @@ def list_bindings(
                 openid=r.openid,
                 openid_type=r.openid_type,
                 group_id=r.group_id,
+                group_openid=r.group_openid,
                 group_name=r.group_name,
                 created_at=r.created_at.isoformat() if r.created_at else "",
                 updated_at=r.updated_at.isoformat() if r.updated_at else "",
