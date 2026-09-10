@@ -185,7 +185,7 @@ class BotWorkSubmitIn(BaseModel):
     qq: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1, max_length=255)
     author: Optional[str] = None
-    type: Optional[str] = None  # novel/anime/comic/game/fanwork/other，默认 other
+    type: Optional[str] = None  # novel/anime/movie/gallery/fanwork/other，默认 other（对齐 models.WorkType）
     summary: Optional[str] = None
     tags: Optional[List[str]] = None
     links: Optional[List[Dict[str, str]]] = None  # [{"site_name": "...", "url": "..."}]

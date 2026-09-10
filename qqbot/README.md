@@ -12,10 +12,13 @@
 
 | 插件 | 职责 |
 | --- | --- |
-| `group_member_sync.py` | 群成员白名单同步：进群/退群事件实时 upsert、启动与定时（`FULL_SYNC_INTERVAL_HOURS`）全量同步；超级用户命令 `sync_member` |
-| `avatar_sync.py` | 群成员头像同步：backend 通知后从 QQ 头像外链下载并转存 zfile；超级用户命令 `sync_avatar` |
-| `auth_code.py` | 注册绑定 + 登录验证码通道：①（主流程，方向反转）用户在站点获取绑定码后**发给机器人**（群内 @机器人「绑定 <码>」或私聊），bot 调 backend `/bot/auth/verify-register` 核销 → QQ 加白名单 + 绑定官方 openid；②（旧通道）接收 backend 推送的登录验证码并私聊下发、登录成功通知 |
-| `works.py` | 群内作品命令：`热门`/`hot`、`搜索 <关键词>`/`search`、`安利 <标题> ...`/`recommend`（无账号自动建号入库）；官方通道下 openid 经注册绑定映射解析回真实 QQ |
+| `group_member_sync.py` | 群成员白名单同步：进群/退群事件实时 upsert、启动与定时（`FULL_SYNC_INTERVAL_HOURS`）全量同步；超级用户命令 `/同步 成员` |
+| `avatar_sync.py` | 群成员头像同步：backend 通知后从 QQ 头像外链下载并转存 zfile；超级用户命令 `/同步 头像` |
+| `auth_code.py` | 注册绑定 + 登录验证码通道：①（主流程，方向反转）用户在站点获取绑定码后**发给机器人**（群内 @机器人「/绑定 -c <码>」或私聊），bot 调 backend `/bot/auth/verify-register` 核销 → QQ 加白名单 + 绑定官方 openid；②（旧通道）接收 backend 推送的登录验证码并私聊下发、登录成功通知 |
+| `cli_router.py` | **GNU 命令分发入口**：唯一 `on_message` 路由，rule 阶段判定是否命令（命中即 block、未命中放行不影响聊天）；含裸验证码兜底通道 |
+| `commands/` | 命令实现：`work`(hot/search/add)、`auth`(bind)、`sync`(member/avatar)、`help`；各模块导出 `COMMANDS` 定义与 handler |
+| `_lib/cli.py` | **命令解析核心**：GNU 解析器（`--long`/`-s`/等号/连写/可重复/布尔开关）、全角归一化、中文报错+近似纠正、帮助渲染；不依赖 nonebot 可独立单测 |
+| `works.py` | 作品命令已迁移至 `commands/work.py`，本文件保留为空壳（避免 nonebot 重复注册）；原 `热门`/`搜索`/`安利` 现走 `/热门` `/搜索` `/安利` |
 | `_lib/bots.py` | 公共库：适配器识别/调度、私聊发送、openid → 真实 QQ 解析（带 TTL 缓存） |
 | `_lib/client.py` | 公共库：封装对 backend `/bot/*` 内部 API 的 HTTP 调用（token、超时、错误处理） |
 

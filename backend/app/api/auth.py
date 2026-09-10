@@ -186,7 +186,7 @@ def register(payload: schemas.RegisterIn, db: Session = Depends(get_db), setting
         expires_in_minutes=CODE_TTL_MINUTES,
         message=(
             f"请在 {CODE_TTL_MINUTES} 分钟内把验证码发给机器人完成验证："
-            "群内 @机器人 发送「绑定 " + code + "」，或添加机器人为好友私聊发送"
+            "群内 @机器人 发送「/绑定 -c " + code + "」，或添加机器人为好友私聊发送"
         ),
     )
 
@@ -271,7 +271,7 @@ def bind_code(
         expires_in_minutes=CODE_TTL_MINUTES,
         message=(
             f"请在 {CODE_TTL_MINUTES} 分钟内把验证码发给机器人完成绑定："
-            "群内 @机器人 发送「绑定 " + code + "」"
+            "群内 @机器人 发送「/绑定 -c " + code + "」"
         ),
     )
 

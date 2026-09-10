@@ -88,20 +88,29 @@ def hot_works(
 @router.get("/search")
 def search_works(
     keyword: str = Query(..., min_length=1),
-    limit: int = Query(10, ge=1, le=20),
+    limit: int = Query(10, ge=1, le=50),
+    type: Optional[str] = Query(None, description="按作品类型过滤：novel/anime/movie/gallery/fanwork/other"),
     db: Session = Depends(get_db),
     _: BotAuthenticated = Depends(),
 ):
-    """关键词搜索（标题 / 作者，MVP 用 LIKE；后续接全文检索）。"""
+    """关键词搜索（标题 / 作者，MVP 用 LIKE；后续接全文检索）。
+
+    type 可选：群机器人 /搜索 --type 传入，按 WorkType 精确过滤；非法值忽略（不过滤）。
+    """
     like = f"%{keyword}%"
-    works = (
+    query = (
         db.query(models.Work)
         .filter(models.Work.status == models.WorkStatus.PUBLISHED)
         .filter(models.Work.title.like(like) | models.Work.author.like(like))
-        .order_by(models.Work.updated_at.desc())
-        .limit(limit)
-        .all()
     )
+    if type:
+        valid_types = {
+            models.WorkType.NOVEL, models.WorkType.ANIME, models.WorkType.MOVIE,
+            models.WorkType.GALLERY, models.WorkType.FANWORK, models.WorkType.OTHER,
+        }
+        if type in valid_types:
+            query = query.filter(models.Work.type == type)
+    works = query.order_by(models.Work.updated_at.desc()).limit(limit).all()
     return {"ok": True, "items": [_compact(w) for w in works]}
 
 

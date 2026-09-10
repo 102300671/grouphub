@@ -62,11 +62,12 @@ grouphub/
 ├── qqbot/                # nonebot2 机器人（QQ 官方主用 + OneBot 备用）
 │   ├── bot.py            # 入口：注册双适配器
 │   └── plugins/
-│       ├── group_member_sync.py  # QQ 群成员白名单同步
-│       ├── avatar_sync.py        # 头像同步
-│       ├── auth_code.py          # 注册绑定码核验（用户发码给 bot）+ 登录验证码通道
-│       ├── works.py              # 群内发作品（热门/搜索/安利）
-│       └── _lib/                 # 适配器调度 / backend API 客户端
+│       ├── cli_router.py         # GNU 命令分发入口（唯一 on_message 路由）
+│       ├── commands/             # 命令实现：work / auth / sync / help
+│       ├── group_member_sync.py  # QQ 群成员白名单同步（事件 + HTTP）
+│       ├── avatar_sync.py        # 头像同步（事件 + HTTP）
+│       ├── auth_code.py          # 注册绑定码核验 + 登录验证码通道（HTTP）
+│       └── _lib/                 # 适配器调度 / backend 客户端 / cli 命令解析核心
 ├── deploy/               # setup.sh 一键部署 + systemd + docker-compose
 ├── docs/                 # PRD 文档
 ├── files/                # zfile 存储根（works/novel、works/movie 等）
@@ -113,7 +114,7 @@ nb run
 
 ### 注册 / 登录流程
 
-- **注册**：站点输入 QQ 号 + 密码 → 页面显示 6 位绑定码 → 群里 @机器人 发送「绑定 <码>」（或私聊）→ 机器人核销：QQ 加入白名单 + 绑定官方 openid → 页面自动检测并登录
+- **注册**：站点输入 QQ 号 + 密码 → 页面显示 6 位绑定码 → 群里 @机器人 发送「/绑定 -c <码>」（或私聊）→ 机器人核销：QQ 加入白名单 + 绑定官方 openid → 页面自动检测并登录
 - **登录**：QQ 号 + 密码（退群成员 token 立即失效）
 
 ---
@@ -170,3 +171,4 @@ location /alist {
 ## 参考
 
 - 产品文档：[docs/PRD_群图书馆网站.md](docs/PRD_群图书馆网站.md)
+- 机器人命令规范：[docs/机器人命令规范.md](docs/机器人命令规范.md)（GNU 风格 `/命令 --选项`）

@@ -184,7 +184,7 @@ onBeforeUnmount(stopPolling);
         <ol class="steps muted">
           <li><b>推荐：在群里</b> @机器人 发送下方命令（主要方式）：</li>
         </ol>
-        <div class="cmd-box">@机器人 绑定 {{ bindCode }}</div>
+        <div class="cmd-box">@机器人 /绑定 -c {{ bindCode }}</div>
         <ol class="steps muted" start="2">
           <li>私聊发送需要机器人为你的好友（私聊名额有限，仅按需分配，优先群内操作）</li>
           <li>等待机器人回复「验证通过」…（本页会自动检测）</li>

@@ -7,7 +7,7 @@
     → 仅 QQ 官方 bot 在线时无法校验在群（官方无成员信息 API），
       直接推头像外链（注册流程本身已被后端白名单校验兜底）
   - 进群事件（OneBot v11）：顺手拉单个新成员头像并推送
-  - SUPERUSER /sync_avatar：手动触发全量同步（补历史数据用）
+  - SUPERUSER /同步 头像（/sync avatar）：手动触发全量同步（补历史数据用，见 commands/sync.py）
   后端负责：下载头像 → 转存 zfile /avatars/ → 写 group_members / users
 
 适配器：QQ 官方为主用（不参与头像拉取，无成员信息 API），
@@ -23,10 +23,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-from nonebot import get_driver, logger, on_command, on_notice
+from nonebot import get_driver, logger, on_notice
 from nonebot.adapters import Bot, Event
-from nonebot.permission import SUPERUSER
-from nonebot.rule import to_me
 
 from ._lib.bots import is_onebot_v11, onebot_bots
 from ._lib.client import backend_client
@@ -229,24 +227,6 @@ async def _handle_increase_for_avatar(bot: Bot, event: Event):
             logger.info(f"[avatar_sync] 新成员 {qq} 头像已同步")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[avatar_sync] 新成员头像同步失败（不影响成员入库）：qq={qq} err={exc}")
-
-
-# ------------------ 命令：管理员手动触发 ------------------
-
-_avatar_cmd = on_command("sync_avatar", rule=to_me(), permission=SUPERUSER, block=True)
-
-
-@_avatar_cmd.handle()
-async def _avatar_cmd_handler(bot: Bot, event: Event):
-    await bot.send(event, "开始同步群成员头像 …")
-    results = await full_avatar_sync()
-    lines = []
-    for r in results:
-        ok = r.get("ok")
-        fetched = r.get("fetched", 0)
-        failed = len([x for x in r.get("results", []) if not x.get("ok")])
-        lines.append(f"{'OK' if ok else 'ERR'} fetched={fetched} failed={failed}")
-    await bot.send(event, "头像同步结果：\n" + "\n".join(lines) if lines else "没有已连接的 bot。")
 
 
 __all__ = ["sync_avatars", "full_avatar_sync", "fetch_avatar_for_qq"]

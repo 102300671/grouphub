@@ -3,7 +3,8 @@
 对齐 PRD §6.2：
   - 启动时 + 每 N 小时：全量拉群成员 → batch_upsert + mark_inactive_others
   - 监听进群/退群事件：upsert_one / set_inactive
-  - 命令行（管理员）：`/sync_member <group_id|all>` 手动触发一次全量重同步
+  - 命令行（管理员）：`/同步 成员`（`/sync member`）手动触发一次全量重同步
+    命令实现见 commands/sync.py；本模块只保留事件监听与 HTTP 路由
 
 适配器：QQ 官方为主用，但成员列表 / 成员信息 API 仅 OneBot v11 提供
 （QQ 官方平台没有群成员列表接口），故本插件的拉取动作自动回落到备用
@@ -26,10 +27,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-from nonebot import get_driver, logger, on_command, on_notice, require
+from nonebot import get_driver, logger, on_notice, require
 from nonebot.adapters import Bot, Event
-from nonebot.permission import SUPERUSER
-from nonebot.rule import to_me
 
 from ._lib.bots import is_onebot_v11, onebot_bots
 from ._lib.client import backend_client
@@ -100,10 +99,13 @@ async def _fetch_group_member_list(bot: Bot, group_id: str) -> List[Dict[str, st
     return normalized
 
 
-async def _sync_one_group(bot: Bot, group_id: str, mark_inactive_others: bool = True) -> Dict[str, Any]:
-    """对单个群执行全量同步 → 调 backend /bot/members/batch_upsert。"""
+async def _sync_one_group(bot: Bot, group_id: str, mark_inactive_others: bool = True, force: bool = False) -> Dict[str, Any]:
+    """对单个群执行全量同步 → 调 backend /bot/members/batch_upsert。
+
+    force=True 时跳过「拉到 0 个成员则不标记其余人退群」的防误清保护。
+    """
     members = await _fetch_group_member_list(bot, group_id)
-    if not members and mark_inactive_others:
+    if not members and mark_inactive_others and not force:
         logger.warning(
             f"[group_member_sync] 群 {group_id} 拉到 0 个成员，为避免误清所有群友，"
             f"本次强制 mark_inactive_others=false。检查 bot 连接与权限。"
@@ -133,7 +135,7 @@ async def _sync_one_group(bot: Bot, group_id: str, mark_inactive_others: bool = 
         return {"ok": False, "group_id": group_id, "error": str(exc)}
 
 
-async def full_sync(groups: Optional[List[str]] = None, mark_inactive_others: bool = True) -> List[Dict[str, Any]]:
+async def full_sync(groups: Optional[List[str]] = None, mark_inactive_others: bool = True, force: bool = False) -> List[Dict[str, Any]]:
     """公共入口：对所有 OneBot v11 bot + 目标群做一次全量同步。
 
     成员列表 API 仅 OneBot v11 提供（QQ 官方平台没有该接口），
@@ -156,7 +158,7 @@ async def full_sync(groups: Optional[List[str]] = None, mark_inactive_others: bo
     for bot in bots.values():
         for gid in groups:
             results.append(
-                await _sync_one_group(bot, gid, mark_inactive_others=mark_inactive_others)
+                await _sync_one_group(bot, gid, mark_inactive_others=mark_inactive_others, force=force)
             )
     return results
 
@@ -263,53 +265,6 @@ async def _handle_member_change(bot: Bot, event: Event):
         await _upsert_one(gid, qq, str(nickname) if nickname else None)
     else:
         await _set_inactive(gid, qq)
-
-
-# ------------------ 命令：管理员手动重同步 ------------------
-
-_sync_cmd = on_command("sync_member", rule=to_me(), permission=SUPERUSER, block=True)
-
-
-@_sync_cmd.handle()
-async def _sync_cmd_handler(bot: Bot, event: Event):
-    """命令格式：/sync_member [all|group_id,group_id]
-
-    示例：
-      /sync_member                 → 同步 .env 里配置的 SYNC_GROUPS
-      /sync_member all             → 同步所有
-      /sync_member 123456,789012   → 同步指定两个群
-    """
-    # OneBotV11 的 command 参数可从 get_args / message / plaintext 拿，兼容写法：
-    plain = (
-        getattr(event, "message", None)
-        and event.get_plaintext()  # type: ignore[union-attr]
-    ) or ""
-    # 去掉命令前缀
-    for prefix in ("/sync_member", "sync_member"):
-        if plain.startswith(prefix):
-            plain = plain[len(prefix):].strip()
-            break
-    groups = _parse_groups_arg(plain or None)
-
-    if not groups:
-        await bot.send(event, "未配置 SYNC_GROUPS，也没传群号，无法同步。")
-        return
-    if not _onebot_enabled():
-        await bot.send(
-            event,
-            "OneBot v11 未启用（QQ 官方适配器无群成员列表 API），无法同步群成员。\n"
-            "请配置 NapCat 等OneBot 实现后重试。",
-        )
-        return
-    await bot.send(event, f"开始手动重同步，目标群 {groups} …")
-    results = await full_sync(groups)
-    lines = [
-        f"{'OK' if r.get('ok') else 'ERR'} 群 {r.get('group_id','?')} "
-        f"up={r.get('upserted_count','-')} off={r.get('marked_inactive_count','-')}"
-        + (f" err={r.get('error','')}" if not r.get("ok") else "")
-        for r in results
-    ]
-    await bot.send(event, "同步结果：\n" + "\n".join(lines))
 
 
 # ------------------ HTTP 接口：管理员后台手动触发（来自 backend /admin/trigger_member_sync） ------------------

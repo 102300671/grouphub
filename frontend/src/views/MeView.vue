@@ -222,7 +222,7 @@ onBeforeUnmount(stopBindPoll);
           <span class="bind-code-text">{{ bindCode }}</span>
           <button class="btn btn-ghost btn-sm" type="button" @click="copyBindCode">复制</button>
         </div>
-        <div class="bind-cmd-box">@机器人 绑定 {{ bindCode }}</div>
+        <div class="bind-cmd-box">@机器人 /绑定 -c {{ bindCode }}</div>
         <p class="muted text-sm">在群里 @机器人 发送上方命令（或私聊机器人），本页会自动检测，绑定成功后弹窗自动关闭。</p>
         <div class="modal-foot">
           <span class="muted text-sm">有效期 {{ bindExpires }} 分钟</span>

@@ -18,7 +18,7 @@ nonebot-adapter-qq 1.7.x 未封装该系列 API，统一走 _lib.bots.qq_openapi
   - specific 关联的 user_openids / group_openids 一次最多 20 个
 
 元素说明：
-  - command：用户点击后 name 内容填入聊天输入框（配合 on_command 触发，如「绑定」）
+  - command：用户点击后 name 内容填入聊天输入框（配合命令分发触发，如 `/绑定`）
   - link：用户点击后浏览器打开 url（如站点首页）
 
 实测平台行为（2026-09 验证）：

@@ -92,7 +92,7 @@ async def trigger_member_sync(
     """管理后台「手动触发全量重同步」按钮（PRD §6.2 + F1 辅助按钮）。
 
     通过反向调 qqbot 的 /bot/admin/trigger_sync（X-Bot-Token 鉴权）触发 nonebot 插件执行 full_sync。
-    若 qqbot 不可达（本地没起 nonebot2），降级提示管理员可到 QQ 群内 @机器人 发 `/sync_member all`。
+    若 qqbot 不可达（本地没起 nonebot2），降级提示管理员可到 QQ 群内 @机器人 发 `/同步 成员 --all`。
     """
     import httpx
 
@@ -118,7 +118,7 @@ async def trigger_member_sync(
             "ok": False,
             "message": (
                 f"无法联系 qqbot（{exc}）。请确认 qqbot 已启动（端口 8083，DRIVER 含 ~fastapi），"
-                "或到群里 @机器人 发「/sync_member all」手动触发。"
+                "或到群里 @机器人 发「/同步 成员 --all」手动触发。"
             ),
         }
 
