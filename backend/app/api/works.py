@@ -603,8 +603,8 @@ def _attachment_headers(file_name: str, media_type: str) -> Dict[str, str]:
 def work_chapters(work_id: int, db: Session = Depends(get_db)):
     """章节列表。
 
-    - 单文件文本（txt/md）且能切出 >=2 章 → mode=split，按行内偏移切章
-    - 其余情况（多文件 / 单文件非文本 / 切不出章节）→ mode=file，每个文件 = 一章
+    - 单文件可抽出正文（txt/md/epub/docx/doc…）→ mode=split，按目录或「第X章」切章（哪怕只有 1 章也走文本阅读）
+    - 其余情况（多文件 / PDF / 媒体 / 抽出失败）→ mode=file，每个文件 = 一章
     """
     _, files = _work_and_files(db, work_id)
     if not files:
@@ -612,11 +612,12 @@ def work_chapters(work_id: int, db: Session = Depends(get_db)):
 
     if len(files) == 1:
         ef = files[0]
-        if chapters.ext_of(ef.file_name) in chapters.SPLITTABLE_EXTS:
+        ext = chapters.ext_of(ef.file_name)
+        if ext in chapters.EXTRACTABLE_EXTS:
             try:
-                text = chapters.decode_bytes(_fetch_or_502(ef.url))
-                parts = chapters.split_text(text)
-                if len(parts) >= 2:
+                doc = chapters.load_extracted(ef.url, ext, ef.size_bytes or 0)
+                parts = doc.parts or [{"title": None, "start": 0, "end": len(doc.text)}]
+                if doc.text.strip():
                     return {
                         "mode": "split",
                         "chapters": [
@@ -634,7 +635,7 @@ def work_chapters(work_id: int, db: Session = Depends(get_db)):
             except HTTPException:
                 raise
             except Exception:
-                pass  # 拉取/切分失败时退化为整文件一章
+                pass  # 拉取/抽出失败时退化为整文件一章
 
     return {
         "mode": "file",
@@ -662,21 +663,27 @@ def file_raw(
 ):
     """代理拉取 zfile 文件内容并补正确的 Content-Type/charset（站内阅读专用）。
 
-    - 文本：text/plain; charset=utf-8 —— 根治浏览器直开 zfile 直链乱码
-    - 图片/视频/音频/PDF：inline 流式，供站内观看
-    - 其它（epub/zip/docx…）：attachment 触发下载
-    - start/end：文本按字符偏移切片（单文件章节化阅读）
+    - 可抽出文档（txt/epub/docx/doc…）：抽出 UTF-8 正文，text/plain；start/end 按字符切片
+    - 图片/视频/音频/PDF：inline 原文件流，供站内观看
+    - 其它（zip/mobi…）：attachment 触发下载
     """
     ef = _ef_or_404(db, work_id, file_id)
     ext = chapters.ext_of(ef.file_name)
-    data = _fetch_or_502(ef.url)
     media_type, disposition = chapters.content_type_for(ext)
 
-    if ext in chapters.SPLITTABLE_EXTS and (start is not None or end is not None):
-        text = chapters.decode_bytes(data)
-        data = text[start or 0 : end if end is not None else len(text)].encode("utf-8")
-        media_type = "text/plain; charset=utf-8"
-        disposition = "inline"
+    if ext in chapters.EXTRACTABLE_EXTS:
+        try:
+            doc = chapters.load_extracted(ef.url, ext, ef.size_bytes or 0)
+            text = doc.text
+            data = text[start or 0 : end if end is not None else len(text)].encode("utf-8")
+            media_type = "text/plain; charset=utf-8"
+            disposition = "inline"
+        except HTTPException:
+            raise
+        except Exception:
+            data = _fetch_or_502(ef.url)
+    else:
+        data = _fetch_or_502(ef.url)
 
     if disposition == "attachment":
         cd = f"attachment; filename*=UTF-8''{quote(chapters.safe_filename(ef.file_name))}"
@@ -728,29 +735,40 @@ def work_download(
         media_type, _ = chapters.content_type_for(chapters.ext_of(ef.file_name))
         return Response(content=data, media_type=media_type, headers=_attachment_headers(ef.file_name, media_type))
 
-    # 单文本文件 + 章节选择 → 按序抽取章节合并成一个 TXT
+    # 单文件 + 章节选择 → 抽出正文后按序抽取章节合并成一个 TXT
     if len(selected) == 1 and ch_ids:
         ef = selected[0]
-        if chapters.ext_of(ef.file_name) not in chapters.SPLITTABLE_EXTS:
+        ext = chapters.ext_of(ef.file_name)
+        if ext not in chapters.EXTRACTABLE_EXTS:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该文件类型不支持按章节抽取，请下载整本")
-        text = chapters.decode_bytes(_fetch_or_502(ef.url))
-        parts = sorted(chapters.split_text(text), key=lambda p: p["start"])
+        try:
+            doc = chapters.load_extracted(ef.url, ext, ef.size_bytes or 0)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无法抽出该文件正文，请下载整本")
+        parts = sorted(doc.parts, key=lambda p: p["start"])
         picked = [parts[i] for i in ch_ids if 0 <= i < len(parts)]
         if not picked:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未找到有效的章节")
-        body = "\n\n".join(text[p["start"]:p["end"]].strip() for p in picked)
+        body = "\n\n".join(doc.text[p["start"]:p["end"]].strip() for p in picked)
         name = f"{title_safe}-选章合集.txt"
         return Response(content=body.encode("utf-8"), media_type="text/plain; charset=utf-8",
                         headers=_attachment_headers(name, "text/plain; charset=utf-8"))
 
-    # 多文件 → 全部文本则合并为一个 TXT；含二进制则打包 ZIP
+    # 多文件 → 全部可抽出则合并为一个 TXT；含二进制则打包 ZIP
     exts = [chapters.ext_of(f.file_name) for f in selected]
-    if all(e in chapters.SPLITTABLE_EXTS for e in exts):
-        parts = [chapters.decode_bytes(_fetch_or_502(f.url)).strip() for f in selected]
-        body = "\n\n\n".join(p for p in parts if p)
-        name = f"{title_safe}-全本.txt"
-        return Response(content=body.encode("utf-8"), media_type="text/plain; charset=utf-8",
-                        headers=_attachment_headers(name, "text/plain; charset=utf-8"))
+    if all(e in chapters.EXTRACTABLE_EXTS for e in exts):
+        texts = []
+        for f in selected:
+            try:
+                texts.append(chapters.load_extracted(f.url, chapters.ext_of(f.file_name), f.size_bytes or 0).text.strip())
+            except Exception:
+                texts = []
+                break
+        if texts:
+            body = "\n\n\n".join(p for p in texts if p)
+            name = f"{title_safe}-全本.txt"
+            return Response(content=body.encode("utf-8"), media_type="text/plain; charset=utf-8",
+                            headers=_attachment_headers(name, "text/plain; charset=utf-8"))
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

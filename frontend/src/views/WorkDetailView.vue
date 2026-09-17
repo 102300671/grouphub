@@ -557,7 +557,7 @@ onMounted(load);
             </template>
             <FilePreview
               v-else-if="activeFile"
-              :url="activeFile.url"
+              :url="worksClient.rawUrl(work.id, activeFile.id)"
               :file-name="activeFile.file_name"
               :mime-type="activeFile.mime_type"
               :size-bytes="activeFile.size_bytes"

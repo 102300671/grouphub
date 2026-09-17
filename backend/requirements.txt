@@ -16,3 +16,11 @@ python-multipart
 # 工具
 python-dotenv
 httpx
+
+# 文档抽出（站内阅读 EPUB / Word / ODT / RTF）
+ebooklib
+python-docx
+beautifulsoup4
+lxml
+olefile
+striprtf

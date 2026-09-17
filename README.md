@@ -9,8 +9,8 @@
 ## 功能一览
 
 - **公共作品库**：谁先上传谁为上传者，其他人以"支持者 / 推荐者"身份加入；支持小说、番剧/动漫、电影、图集（多图封面任选）、同人文、其他类型
-- **站内阅读 / 观看**：TXT/MD 自动切章在线阅读（UTF-8 无乱码）、视频/图片站内观看；作品页只预览第一章，完整阅读跳独立阅读页
-- **选章 / 选集下载**：单文本文件按章抽取合并 TXT；多文件打包 ZIP；番剧按集、电影按文件多选下载
+- **站内阅读 / 观看**：TXT/MD/EPUB/DOC/DOCX/RTF/ODT 抽出正文在线阅读（UTF-8，可切章）、PDF 站内预览、视频/图片站内观看；作品页只预览第一章，完整阅读跳独立阅读页
+- **选章 / 选集下载**：单个可抽出文档（TXT/EPUB/Word/RTF/ODT 等）按章抽取合并 TXT；多文件打包 ZIP；番剧按集、电影按文件多选下载
 - **文件存储（zfile + alist 双源主备）**：大文件（作品文件上限 4GB）经统一存储层上传，主源不可用自动回退备源并记录直链；封面/附件走通用上传（32MB）
 - **直链添加**：作品文件和论坛/评论/同人附件除上传文件外，可直接粘贴外站直链（视频/图片/文档），站内观看与下载均由后端代理拉取
 - **书评打分**：作品页 1–5 星评分 + 短评（可带附件/直链）
@@ -44,7 +44,8 @@ grouphub/
 ├── backend/              # FastAPI 后端
 │   ├── app/
 │   │   ├── api/          # 路由：works / auth / forum / reviews / fanworks / uploads / admin / bot
-│   │   ├── chapters.py   # 章节切分 / 代理拉取 / Content-Type 修正
+│   │   ├── chapters.py   # 章节切分 / 代理拉取 / Content-Type 修正 / 抽出结果缓存
+│   │   ├── extract.py    # 电子书/办公文档正文抽出（epub/docx/doc/rtf/odt/fb2/html）
 │   │   ├── storage.py    # 统一存储层：zfile / alist 双源主备自动切换
 │   │   ├── zfile_client.py  # zfile 引擎对接
 │   │   ├── alist_client.py  # alist 引擎对接
@@ -53,6 +54,7 @@ grouphub/
 │   │   ├── config.py     # .env 配置
 │   │   └── main.py
 │   ├── scripts/make_admin.py  # 管理员提权/降权兜底脚本
+│   ├── tests/            # unittest 单元测试（.venv/bin/python -m unittest discover -s tests）
 │   ├── data/grouphub.db   # SQLite（自动创建）
 │   ├── .env.example      # 环境变量示例
 │   └── start.sh          # 开发启动（uvicorn --reload，:8003）

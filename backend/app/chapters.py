@@ -2,8 +2,9 @@
 
 连载 / 阅读 / 下载策略（对应 PRD 连载处理）：
 - 多文件作品：每个文件 = 一章（按 WorkExternalFile.id 升序 = 章节顺序），不拆内容
-- 单文件文本（txt/md）：按「第X章/节/回…」或 "Chapter N" 行首自动切章
-- 单文件非文本（epub/pdf/媒体…）：整文件 = 一章，不提供预览时仅下载
+- 单文件可抽出正文（txt/md/epub/docx/doc/rtf/odt/html…）：抽出纯文本后按标题或 EPUB 目录切章
+- 单文件 PDF：整文件 = 一章，站内用浏览器 PDF 查看器（不抽文本，保留排版）
+- 其它媒体：整文件 = 一章，按类型预览或下载
 
 内容代理原则：zfile 直链的 Content-Type/charset 不可控（浏览器直接打开 txt 会乱码），
 站内阅读/下载一律经后端 GET 代理端点拉取后，按扩展名补正确的 Content-Type 与编码再返回。
@@ -11,12 +12,46 @@
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from typing import Dict, List, Tuple
 
 import httpx
 
-# 支持「文内切章」的扩展名（纯文本族）
-SPLITTABLE_EXTS = {"txt", "md", "markdown"}
+from .extract import (
+    EXTRACTABLE_EXTS,
+    MAX_EXTRACT_BYTES,
+    ExtractError,
+    ExtractedDoc,
+    extract_document,
+)
+
+_EXTRACT_CACHE: "OrderedDict[tuple, ExtractedDoc]" = OrderedDict()
+_EXTRACT_CACHE_MAX_ITEMS = 16
+_EXTRACT_CACHE_MAX_BYTES = 64 * 1024 * 1024  # 抽出文本总缓存字节水位，避免连点大文件占满内存
+
+
+def load_extracted(url: str, ext: str, size_bytes: int = 0) -> ExtractedDoc:
+    """拉取并抽出正文；按 url+大小+扩展名做小缓存，避免切章列表与 /raw 各解析一遍。"""
+    ext = (ext or "").lower()
+    size = int(size_bytes or 0)
+    key = (url, size, ext)
+    hit = _EXTRACT_CACHE.get(key)
+    if hit is not None:
+        _EXTRACT_CACHE.move_to_end(key)
+        return hit
+    # 元数据已知且超上限：直接拒绝，避免先把数 GB 的文件完整拉下来才失败
+    if size > MAX_EXTRACT_BYTES:
+        raise ExtractError("文件过大，无法在站内展开阅读，请下载后本地打开")
+    data = fetch_file_bytes(url)
+    doc = extract_document(data, ext)
+    _EXTRACT_CACHE[key] = doc
+    _EXTRACT_CACHE.move_to_end(key)
+    total = sum(len(d.text) for d in _EXTRACT_CACHE.values())
+    while len(_EXTRACT_CACHE) > _EXTRACT_CACHE_MAX_ITEMS or total > _EXTRACT_CACHE_MAX_BYTES:
+        _, popped = _EXTRACT_CACHE.popitem(last=False)
+        total -= len(popped.text)
+    return doc
+
 
 # 行首章节标题：第X章/节/回/卷/集/话/部/篇 或 Chapter N（行需短，避免匹配正文）
 _CHAP_RE = re.compile(

@@ -5,10 +5,10 @@
  * 核心策略（对应 Exp 488206 的反面教训）：
  * - 🖼 图片：直接 <img :src="url">（zfile 直链，无需 auth 头）
  * - 🎬 视频 / 🎵 音频：原生 <video> / <audio>，都是二进制流化，浏览器解码，不存在"乱码"
- * - 📄 PDF：<iframe :src="url"> 由浏览器内置 PDF 查看器渲染（二进制，不乱码）
- * - 📝 纯文本族（txt/md/ass/srt/lrc/json/yaml/...）：fetch 拿 Blob → 按 UTF-8 解码 → 贴到 <pre>，根治浏览器当二进制乱码
- * - 📚 EPUB：浏览器不原生支持，提示下载；不给 srcdoc 或 iframe 渲染
- * - 📦 其它（zip/docx/xls…）：提示下载 + 文件名，绝不把二进制直接塞进 <pre>/iframe，避免乱码屏
+ * - 📄 PDF：<iframe :src="url"> 由浏览器内置 PDF 查看器渲染（走 /raw 代理，补正确 Content-Type）
+ * - 📝 纯文本族（txt/md/ass/srt/lrc/json/yaml/...）：fetch 拿 Blob → 按 UTF-8 解码 → 贴到 <pre>
+ * - 📚 EPUB / Word / ODT / RTF / FB2：后端抽出纯文本后按文本预览（url 须为 /raw）
+ * - 📦 其它（zip/mobi/xls…）：提示下载 + 文件名，绝不把二进制直接塞进 <pre>/iframe
  *
  * Props.url 是 zfile 直链或同源可直接下载的 URL；公开可访问，不需要 Authorization 头。
  */
@@ -41,20 +41,29 @@ const TEXT_EXTS = new Set([
   "txt", "md", "markdown", "json", "xml", "yaml", "yml", "ini", "conf", "log",
   "srt", "vtt", "ass", "sub", "lrc",
   "html", "htm", "css", "js", "ts", "csv", "rtf",
+  // 后端 /raw 抽出正文后按 UTF-8 文本返回
+  "epub", "docx", "doc", "odt", "fb2",
 ]);
 
 const ext = computed(() => extOf(props.fileName, props.mimeType));
 const mime = computed(() => (props.mimeType || "").toLowerCase());
 
 const kind = computed<
-  | "image" | "video" | "audio" | "pdf" | "text" | "epub"
+  | "image" | "video" | "audio" | "pdf" | "text"
   | "download"
 >(() => {
   if (mime.value.startsWith("image/")) return "image";
   if (mime.value.startsWith("video/")) return "video";
   if (mime.value.startsWith("audio/")) return "audio";
   if (mime.value === "application/pdf" || ext.value === "pdf") return "pdf";
-  if (["epub", "mobi", "azw3", "kfx", "fb2", "ibooks"].includes(ext.value)) return "epub";
+  if (
+    mime.value.includes("epub") ||
+    mime.value.includes("msword") ||
+    mime.value.includes("wordprocessingml") ||
+    mime.value.includes("opendocument.text") ||
+    mime.value.includes("rtf") ||
+    mime.value.includes("fictionbook")
+  ) return "text";
   if (TEXT_EXTS.has(ext.value)) return "text";
   // 扩展名无法识别 → 再用 mime 兜底
   if (mime.value.startsWith("text/")) return "text";
@@ -125,13 +134,7 @@ function fmtSizeBytes(bytes?: number | null) {
       <pre v-else class="pv-text">{{ textContent }}</pre>
     </div>
 
-    <!-- EPUB：浏览器不原生支持，只给下载按钮 -->
-    <div v-else-if="kind === 'epub'" class="pv pv-download">
-      <div class="badge badge-muted">电子书（.{{ ext }}）：浏览器不支持原生预览</div>
-      <a :href="url" :download="fileName || undefined" class="btn btn-primary" target="_blank" rel="noreferrer">⬇ 下载到本地阅读</a>
-    </div>
-
-    <!-- 其它类型（zip/docx/ppt/xlx/...）：不预览，避免乱码 -->
+    <!-- 其它类型（zip/mobi/ppt/xlsx/...）：不预览，避免乱码 -->
     <div v-else class="pv pv-download">
       <div class="badge badge-muted">该类型不提供预览（.{{ ext }}）。</div>
       <a :href="url" :download="fileName || undefined" class="btn btn-primary" target="_blank" rel="noreferrer">⬇ 下载（{{ fmtSizeBytes(props.sizeBytes) }}）</a>

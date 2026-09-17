@@ -89,7 +89,7 @@ const typeLabel = computed(() => TYPE_OPTIONS.find(t => t.value === type.value)?
 
 // 直链示例随类型变化：小说给 txt，番剧/电影给视频，其它给文档
 const directUrlPlaceholder = computed(() => {
-  if (type.value === "novel") return "https://.../example.txt";
+  if (type.value === "novel") return "https://.../example.epub 或 .txt / .pdf / .docx";
   if (type.value === "anime" || type.value === "movie") return "https://.../example.mp4";
   if (type.value === "gallery") return "https://.../example.jpg";
   return "https://.../example.pdf";

@@ -3,7 +3,7 @@
  * 站内阅读页（独立全屏，供作品页「阅读 / 选章下载」入口使用）。
  *
  * - 单文件文本：按后端切分章节，章节内容走 /raw 代理（text/plain; charset=utf-8，无乱码）
- * - 多文件 / 非文本：每文件一章，FilePreview 按类型渲染（图片/视频/音频/PDF/文本/下载）
+ * - 多文件 / 非文本：每文件一章，FilePreview 按类型渲染（图片/视频/音频/PDF/抽出文本/下载）
  * - 布局：顶栏固定；章节侧栏可收起/展开，展开时整体固定不随页面滚动（仅章节列表内部滚动，头部固定）；
  *   正文区整块固定在视口内：章节标题固定、中间正文独立滚动、底部翻页固定
  * - 下载：整本（单文件 = 原样下载；多文件 = 合并 TXT 或 ZIP）+ 当前章节 + 勾选章节下载（按序合并为一个文件）
@@ -244,10 +244,10 @@ onMounted(async () => {
             <pre v-else class="reading-text">{{ textContent }}</pre>
           </template>
 
-          <!-- 每文件一章：按类型渲染（图片/视频/音频/PDF/文本/下载） -->
+          <!-- 每文件一章：一律走 /raw 代理（PDF/音视频补 Content-Type；epub/docx 抽出正文） -->
           <FilePreview
             v-else-if="currentFile"
-            :url="currentFile.url"
+            :url="worksClient.rawUrl(id, currentFile.id)"
             :file-name="currentFile.file_name"
             :mime-type="currentFile.mime_type"
             :size-bytes="currentFile.size_bytes"

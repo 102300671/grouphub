@@ -120,7 +120,7 @@ export interface WorkDetail extends Work {
   };
 }
 
-/** 章节（单文件文本 = 文内切章；多文件/非文本 = 每文件一章） */
+/** 章节（单文件可抽出文档 = 文内/目录切章；多文件/PDF/媒体 = 每文件一章） */
 export interface WorkChapter {
   index: number;
   file_id: number;
