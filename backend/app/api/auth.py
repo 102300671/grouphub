@@ -469,11 +469,13 @@ def confirm_code(payload: schemas.ConfirmCodeIn, request: Request, db: Session =
     _code_last_sent.pop(payload.qq, None)
 
     # 不存在则自动注册（角色与密码注册一致：ADMIN_QQS 内直接为 admin）
+    auto_password: Optional[str] = None
     user = db.query(models.User).filter(models.User.qq == payload.qq).first()
     if user is None:
         nickname = _guess_nickname_by_qq(db, payload.qq) or f"群友{payload.qq}"
         import secrets
         random_pw = secrets.token_hex(16)
+        auto_password = random_pw
         initial_role = (
             models.UserRole.ADMIN if payload.qq in settings.admin_qq_set else models.UserRole.MEMBER
         )
@@ -495,7 +497,77 @@ def confirm_code(payload: schemas.ConfirmCodeIn, request: Request, db: Session =
     _notify_login(settings, user.qq, request)
 
     token = create_access_token(user.id, settings)
-    return schemas.AuthTokenOut(access_token=token, user=_user_out(user))
+    return schemas.AuthTokenOut(
+        access_token=token,
+        user=_user_out(user),
+        generated_password=auto_password,
+    )
+
+
+# ------------------- 修改密码 -------------------
+
+@router.post("/change-password", response_model=schemas.SimpleMessageOut)
+def change_password(
+    payload: schemas.ChangePasswordIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """修改密码：校验旧密码或 QQ 验证码后更新 password_hash。
+
+    - old_password 方式：校验用户当前密码（常规改密）
+    - code 方式：复用 login 验证码通道（先调 /auth/send-code，QQ 私聊收码），
+      忘记随机密码/旧密码时使用；校验通过即视为本人操作。
+    两种方式至少提供一种；同时提供时以 code 优先。
+    """
+    now = utcnow()
+
+    if payload.code:
+        # 防爆破：与登录验证码共用同一计数
+        attempts = _code_attempts.get(user.qq, 0)
+        if attempts >= CODE_MAX_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="验证码错误次数过多，请重新获取验证码",
+            )
+        vc = (
+            db.query(models.VerificationCode)
+            .filter(
+                models.VerificationCode.qq == user.qq,
+                models.VerificationCode.purpose == "login",
+                models.VerificationCode.code == payload.code,
+            )
+            .order_by(models.VerificationCode.created_at.desc())
+            .first()
+        )
+        if vc is None or vc.used or vc.expires_at < now:
+            _code_attempts[user.qq] = attempts + 1
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="验证码错误或已失效，请重新获取",
+            )
+        vc.used = True
+        db.commit()
+        _code_attempts.pop(user.qq, None)
+        _code_last_sent.pop(user.qq, None)
+    elif payload.old_password:
+        if not verify_password(payload.old_password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="旧密码错误",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请提供旧密码或验证码",
+        )
+
+    # 更新密码
+    user.password_hash = hash_password(payload.new_password)
+    db.commit()
+    return schemas.SimpleMessageOut(
+        ok=True,
+        message="密码已修改，下次登录可使用新密码",
+    )
 
 
 # ------------------- 登出 / 我 -------------------

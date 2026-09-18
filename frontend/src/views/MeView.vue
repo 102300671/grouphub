@@ -2,12 +2,16 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useUserStore } from "@/stores/user";
 import { authClient, extractErrMsg } from "@/api/http";
+import ChangePasswordModal from "@/components/ChangePasswordModal.vue";
 import type { OpenidBindingItem, Work } from "@/types/api";
 
 const user = useUserStore();
 const tip = ref("");
 const loading = ref(false);
 const errorMsg = ref("");
+
+// 修改密码
+const changePwdVisible = ref(false);
 
 // 用户参与的作品数据
 const uploadedWorks = ref<Work[]>([]);
@@ -170,6 +174,9 @@ onBeforeUnmount(stopBindPoll);
         <div class="mt-4">
           <div class="alert alert-info" v-if="tip">{{ tip }}</div>
         </div>
+        <div class="mt-4">
+          <button class="btn btn-ghost btn-sm" type="button" @click="changePwdVisible = true">🔑 修改密码</button>
+        </div>
       </div>
     </div>
 
@@ -329,6 +336,9 @@ onBeforeUnmount(stopBindPoll);
       </div>
     </section>
   </section>
+
+  <!-- 修改密码弹窗（从「我的」页面进入：校验当前密码或验证码） -->
+  <ChangePasswordModal :visible="changePwdVisible" @close="changePwdVisible = false" />
 </template>
 
 <style scoped>

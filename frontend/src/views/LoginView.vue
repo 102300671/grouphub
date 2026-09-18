@@ -82,6 +82,8 @@ async function onCodeSubmit() {
   }
   submitting.value = true;
   try {
+    // 登录成功后：若为验证码自动注册，store 已暂存一次性随机密码，
+    // MainLayout 挂载时会优先弹出提示（修改/记住密码）
     await user.loginByCode(q, c);
     router.replace(redirect);
   } catch (e) {

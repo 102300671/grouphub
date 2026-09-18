@@ -2,6 +2,7 @@
 import { RouterLink, RouterView, useRouter } from "vue-router";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useUserStore } from "@/stores/user";
+import ChangePasswordModal from "@/components/ChangePasswordModal.vue";
 
 const user = useUserStore();
 const router = useRouter();
@@ -32,7 +33,12 @@ const bindCode = ref("");
 const bindExpires = ref(10);
 let bindPollTimer: ReturnType<typeof setInterval> | null = null;
 
-onMounted(async () => {
+/* ---------- 验证码自动注册：一次性随机密码提示（优先于 openid 绑定弹窗） ---------- */
+const showPwdModal = ref(false);
+const pendingGenPwd = ref<string | null>(null);
+
+/** openid 绑定检查（登录后执行一次）：未绑定则弹窗引导发码给机器人 */
+async function checkBind() {
   if (!user.isLoggedIn || !user.pendingBindCheck) return;
   user.pendingBindCheck = false;
   try {
@@ -46,7 +52,25 @@ onMounted(async () => {
   } catch {
     // 检查失败（如 60s 内重复登录触发限频）不影响正常使用
   }
+}
+
+onMounted(() => {
+  // 验证码自动注册：先弹随机密码提示（改/记密码），关闭后再检查 openid 绑定
+  const genPwd = user.consumeGeneratedPassword();
+  if (genPwd) {
+    pendingGenPwd.value = genPwd;
+    showPwdModal.value = true;
+    return;
+  }
+  checkBind();
 });
+
+/** 随机密码弹窗关闭：继续走 openid 绑定检查 */
+function onPwdModalClose() {
+  showPwdModal.value = false;
+  pendingGenPwd.value = null;
+  checkBind();
+}
 
 function startBindPoll() {
   stopBindPoll();
@@ -141,6 +165,13 @@ onBeforeUnmount(stopBindPoll);
         <span class="tab-icon">👤</span>我的
       </RouterLink>
     </nav>
+
+    <!-- 验证码自动注册：展示一次性随机密码，引导修改/记住（优先于 openid 补绑弹窗） -->
+    <ChangePasswordModal
+      :visible="showPwdModal"
+      :generated-password="pendingGenPwd"
+      @close="onPwdModalClose"
+    />
 
     <!-- 老账号 openid 补绑弹窗：把验证码发给机器人即可完成绑定，绑定后自动关闭 -->
     <div v-if="showBindModal" class="modal-mask" @click.self="dismissBind">

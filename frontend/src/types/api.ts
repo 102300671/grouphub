@@ -13,6 +13,15 @@ export interface AuthTokenOut {
   access_token: string;
   token_type: "bearer";
   user: AuthUser;
+  /** 验证码登录自动注册时，本次登录生成的一次性随机密码（仅当次返回，用于提示用户修改/记住） */
+  generated_password?: string | null;
+}
+
+/** 修改密码入参：old_password（校验旧密码）与 code（QQ 验证码）二选一 */
+export interface ChangePasswordIn {
+  old_password?: string;
+  code?: string;
+  new_password: string;
 }
 
 /** 注册第一步响应：账号已暂存，返回绑定码等用户发给机器人校验 */

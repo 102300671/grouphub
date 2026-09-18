@@ -133,6 +133,9 @@ export const authClient = {
   confirmCode(data: { qq: string; code: string }) {
     return request<AuthTokenOut>({ url: "/auth/confirm-code", method: "POST", data });
   },
+  changePassword(data: { old_password?: string; code?: string; new_password: string }) {
+    return request<SimpleMessageOut>({ url: "/auth/change-password", method: "POST", data });
+  },
   me() {
     return request<AuthTokenOut["user"]>({ url: "/auth/me", method: "GET" });
   },

@@ -91,6 +91,9 @@ class AuthTokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: Dict[str, Any]  # {"id", "qq", "nickname", "role"}
+    # 验证码登录自动注册时，本次登录生成的一次性随机密码（仅当次响应返回，
+    # 前端据此提示用户修改/记住密码；不落库、后续登录不再返回）
+    generated_password: Optional[str] = None
 
 
 class RegisterPendingOut(BaseModel):
@@ -121,6 +124,17 @@ class BindStatusOut(BaseModel):
     """登录后绑定状态轮询响应。"""
     ok: bool = True
     bound: bool
+
+
+class ChangePasswordIn(BaseModel):
+    """修改密码：old_password（校验旧密码）与 code（QQ 验证码）二选一，至少提供一种。
+
+    - old_password：常规改密（知道自己当前密码）
+    - code：忘记密码时用验证码验证（先调 /auth/send-code，QQ 私聊收码后回填）
+    """
+    old_password: Optional[str] = None
+    code: Optional[str] = Field(None, min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=6, max_length=72)
 
 
 class OpenidBindingItem(BaseModel):

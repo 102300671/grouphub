@@ -16,6 +16,16 @@ export const useUserStore = defineStore("user", () => {
   /** 登录成功后置位：MainLayout 挂载时据此检查一次 openid 绑定（老账号补绑弹窗） */
   const pendingBindCheck = ref(false);
 
+  /** 验证码自动注册当次登录返回的一次性随机密码（仅内存态，MainLayout 弹窗提示改/记密码） */
+  const generatedPassword = ref<string | null>(null);
+
+  /** 取出并清空一次性随机密码（只允许消费一次） */
+  function consumeGeneratedPassword(): string | null {
+    const pwd = generatedPassword.value;
+    generatedPassword.value = null;
+    return pwd;
+  }
+
   function _apply(out: AuthTokenOut) {
     saveAuth(out);
     current.value = out.user;
@@ -56,9 +66,19 @@ export const useUserStore = defineStore("user", () => {
     return authClient.deleteBinding(bindingId);
   }
 
-  async function loginByCode(qq: string, code: string) {
+  async function loginByCode(qq: string, code: string): Promise<AuthTokenOut> {
     const out = await authClient.confirmCode({ qq, code });
     _apply(out);
+    // 验证码自动注册：把一次性随机密码暂存到 store，由 MainLayout 弹窗提示修改/记住
+    if (out.generated_password) {
+      generatedPassword.value = out.generated_password;
+    }
+    return out;
+  }
+
+  /** 修改密码：old_password（旧密码）与 code（QQ 验证码）二选一 */
+  async function changePassword(data: { old_password?: string; code?: string; new_password: string }) {
+    return authClient.changePassword(data);
   }
 
   async function logout() {
@@ -102,6 +122,8 @@ export const useUserStore = defineStore("user", () => {
     isAdmin,
     role,
     pendingBindCheck,
+    generatedPassword,
+    consumeGeneratedPassword,
     login,
     register,
     registerStatus,
@@ -110,6 +132,7 @@ export const useUserStore = defineStore("user", () => {
     listBindings,
     deleteBinding,
     loginByCode,
+    changePassword,
     logout,
     ensureMe,
   };
