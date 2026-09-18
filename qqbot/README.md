@@ -16,7 +16,7 @@
 | `avatar_sync.py` | 群成员头像同步：backend 通知后从 QQ 头像外链下载并转存 zfile；超级用户命令 `/同步 头像` |
 | `auth_code.py` | 注册绑定 + 登录验证码通道：①（主流程，方向反转）用户在站点获取绑定码后**发给机器人**（群内 @机器人「/绑定 -c <码>」或私聊），bot 调 backend `/bot/auth/verify-register` 核销 → QQ 加白名单 + 绑定官方 openid；②（旧通道）接收 backend 推送的登录验证码并私聊下发、登录成功通知 |
 | `cli_router.py` | **GNU 命令分发入口**：唯一 `on_message` 路由，rule 阶段判定是否命令（命中即 block、未命中放行不影响聊天）；含裸验证码兜底通道 |
-| `commands/` | 命令实现：`work`(hot/search/add)、`auth`(bind)、`sync`(member/avatar)、`help`；各模块导出 `COMMANDS` 定义与 handler |
+| `commands/` | 命令实现：`work`(hot/search/add)、`auth`(bind)、`sync`(member/avatar)、`ai`(ask/reset/config，AI 问答)、`help`；各模块导出 `COMMANDS` 定义与 handler |
 | `_lib/cli.py` | **命令解析核心**：GNU 解析器（`--long`/`-s`/等号/连写/可重复/布尔开关）、全角归一化、中文报错+近似纠正、帮助渲染；不依赖 nonebot 可独立单测 |
 | `works.py` | 作品命令已迁移至 `commands/work.py`，本文件保留为空壳（避免 nonebot 重复注册）；原 `热门`/`搜索`/`安利` 现走 `/热门` `/搜索` `/安利` |
 | `_lib/bots.py` | 公共库：适配器识别/调度、私聊发送、openid → 真实 QQ 解析（带 TTL 缓存） |
@@ -46,6 +46,12 @@
 | `SITE_BASE_URL` | 站点前端地址，用于群消息里的详情跳转链接 |
 | `SYNC_GROUPS` | 要同步的群号，英文逗号分隔 |
 | `FULL_SYNC_INTERVAL_HOURS` | 全量同步间隔（小时），启动时也会触发一次 |
+| `AI_API_BASE` / `AI_API_KEY` / `AI_MODEL` | AI 问答远程端点（任何 OpenAI 兼容 API：OpenAI/DeepSeek/Kimi/GLM 等）；密钥留空则群里提问会提示未配置 |
+| `AI_LOCAL_BASE_URL` / `AI_LOCAL_API_KEY` / `AI_LOCAL_MODEL` | 本地模型端点（Ollama/llama.cpp/LM Studio 等 OpenAI 兼容服务），群里 `/ai --local <问题>` 走本地 |
+| `AI_SYSTEM_PROMPT` | AI 系统提示词（可留空） |
+| `AI_MAX_HISTORY` / `AI_TIMEOUT` | 每会话携带的最近对话轮数（默认 6）/ 请求超时秒数（默认 120，本地大模型可调大） |
+| `AI_SEARXNG_URL` / `AI_SEARCH_RESULTS` | AI 自主联网（工具 `web:search`）使用的本地 SearXNG 地址（需在 SearXNG 的 `search.formats` 启用 json）/ 注入模型的结果条数（默认 5） |
+| `AI_MAX_TOOL_STEPS` | 单轮问答允许的最多工具调用次数（默认 2，防死循环） |
 | `QQ_BOTS` | （主用）QQ 官方开放平台机器人配置（JSON 数组：`id`=AppID、`secret`=AppSecret；`token` 字段 schema 必填但已不参与鉴权，留空 `""` 即可，见 `.env.prod.example`） |
 | `QQ_AUTH_BASE` | （可选）Access Token 换取接口，默认 `https://bots.qq.com/app/getAppAccessToken`，官方文档现用 `https://api.bot.qq.com/app/getAppAccessToken` |
 | `ONEBOT_WS_URLS` | （备用）OneBot v11 正向 WebSocket 地址列表（NapCat/Lagrange 等，注意复数 URLS） |
@@ -78,6 +84,20 @@
 > 注册绑定码核销一步即完成加白名单（不依赖 OneBot），但白名单的**日常维护**
 > （退群自动置 `is_active=false`、新成员进群同步）仍靠 OneBot 通道，
 > 长期只跑官方适配器会让退群成员残留访问权限，建议官方 + OneBot 双开。
+
+## AI 服务的网络部署（SearXNG / 本地模型）
+
+沿用 zfile/alist 的模式：服务只绑本机、跨网一律走 Tailscale（100.x 网段）、不做公网裸暴露。三种形态：
+
+| 形态 | bot 位置 | `AI_SEARXNG_URL` / `AI_LOCAL_BASE_URL` |
+| --- | --- | --- |
+| A 同机（默认） | 与 SearXNG、模型在同一台机器（本机/WSL/云单机） | `http://127.0.0.1/searxng`、`http://127.0.0.1:8006/v1` |
+| B 内网穿透（Tailscale） | bot 在云 ECS，SearXNG/模型留在家里 | `http://<家里 100.x IP>/searxng`、`http://<家里 100.x IP>:8006/v1` |
+| C 全上云 | bot + SearXNG 同在 ECS，模型走远程 API 或云上推理 | 同 A；`AI_API_BASE` 指向远程 API |
+
+**SearXNG 访问控制**：默认 apt 配置是 `Allow from all`（[deploy/searxng-apache.conf](../deploy/searxng-apache.conf) 已改为仅放行 `Require local` + Tailscale 网段 `100.64.0.0/10`、`fd7a:115c:a1e0::/48`），按文件头注释 cp 到 `/etc/apache2/sites-available/` 后 reload 即可。云安全组不要把 `/searxng` 开给公网；若必须公开页面，改 `settings.yml` 的 `server.limiter: true`（需 redis），不要放开来源 IP。
+
+**本地模型绑定**：本地模型服务通常无鉴权（`AI_LOCAL_API_KEY=none`），跨机时只绑 Tailscale 网卡而非 `0.0.0.0`——llama.cpp server 用 `--host 100.x.x.x --port 8006`，Ollama 用 `OLLAMA_HOST=100.x.x.x:11434`。WSL2 下绑 Tailscale IP 还可省去 Windows 端口转发。
 
 ## 本地运行
 
