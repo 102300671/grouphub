@@ -11,6 +11,7 @@ dependencies = [
     "nonebot-plugin-status>=0.9.0",
     "nonebot-plugin-sentry>=2.0.0",
     "nonebot-plugin-localstore>=0.7.4",
+    "nonebot-plugin-htmlrender>=0.8.1",
 ]
 
 [tool.nonebot]
@@ -32,3 +33,4 @@ nonebot-adapter-onebot = [
 nonebot-plugin-status = ["nonebot_plugin_status"]
 nonebot-plugin-sentry = ["nonebot_plugin_sentry"]
 nonebot-plugin-localstore = ["nonebot_plugin_localstore"]
+nonebot-plugin-htmlrender = ["nonebot_plugin_htmlrender"]

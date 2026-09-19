@@ -204,6 +204,9 @@ class BotWorkSubmitIn(BaseModel):
     tags: Optional[List[str]] = None
     links: Optional[List[Dict[str, str]]] = None  # [{"site_name": "...", "url": "..."}]
     source_work_id: Optional[int] = None  # 同人文 → 原作
+    uploader_qq: Optional[str] = None  # 特权参数：指定上传者 QQ（仅 X-Bot-Token 鉴权的机器人/管理员可用）；
+    # 不传 → uploader 即提交者（qq），走旧的"自动建号"逻辑；
+    # 传了 → 必须是已在站点注册的账号，否则驳回（不自动建号）。
 
 
 # =============== 作品（MVP 占位） ===============

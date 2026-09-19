@@ -29,6 +29,55 @@ def is_onebot_v11(bot: Bot) -> bool:
     return type(bot).__module__.startswith("nonebot.adapters.onebot")
 
 
+class AtSenderBot:
+    """包装 bot，让所有 send 调用自动 @ 消息发送者。
+
+    OneBot v11：用原生 at_sender=True。
+    QQ 官方：消息前插入 mention_user 段（群消息内 @ 对应 openid）。
+    其余适配器：透传，不 @。
+    所有非 send 方法/属性透传给原始 bot（call_api、get 等）。
+    """
+
+    def __init__(self, bot: Bot, event: Any) -> None:
+        self._bot = bot
+        self._event = event
+
+    async def send(self, event: Any, message: Any, **kwargs: Any) -> Any:
+        if is_onebot_v11(self._bot):
+            kwargs.setdefault("at_sender", True)
+            return await self._bot.send(event, message, **kwargs)
+        if is_qq_official(self._bot):
+            message = _prepend_mention_qq(event, message)
+        return await self._bot.send(event, message, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._bot, name)
+
+
+def _prepend_mention_qq(event: Any, message: Any) -> Any:
+    """QQ 官方适配器：在消息前插入 mention_user 段。"""
+    try:
+        from nonebot.adapters.qq import Message as QQMessage
+        from nonebot.adapters.qq import MessageSegment as QQSegment
+
+        user_id = ""
+        try:
+            user_id = event.get_user_id() or ""
+        except Exception:  # noqa: BLE001
+            pass
+        if not user_id:
+            return message
+        mention = QQSegment.mention_user(user_id)
+        if isinstance(message, QQMessage):
+            return QQMessage(mention) + message
+        if isinstance(message, str):
+            return QQMessage(mention) + QQMessage(QQSegment.text(message))
+        # MessageSegment 或其他
+        return QQMessage(mention) + QQMessage(message)
+    except Exception:  # noqa: BLE001
+        return message
+
+
 def all_bots() -> List[Bot]:
     return list(get_bots().values())
 
@@ -80,6 +129,28 @@ async def send_private(qq: str, message: str) -> Dict[str, Any]:
 
 _openid_cache: Dict[Tuple[str, str], Tuple[float, Optional[str]]] = {}
 _OPENID_CACHE_TTL_SECONDS = 600.0
+
+
+async def resolve_sender_qq(event: Event) -> Optional[str]:
+    """从消息事件取发送者真实 QQ；无法识别返回 None。
+
+    OneBot v11：get_user_id() 即真实 QQ（纯数字）。
+    QQ 官方：get_user_id() 是 openid（非数字），查注册绑定映射换回真实 QQ。
+    供 cli_router 的 require_registered 统一校验、各 handler 复用。
+    """
+    try:
+        uid = event.get_user_id()
+    except Exception:  # noqa: BLE001
+        uid = None
+    if not uid:
+        uid = getattr(event, "user_id", None) or getattr(getattr(event, "user", None), "id", None)
+    if not uid:
+        return None
+    uid = str(uid)
+    if uid.isdigit():
+        return uid
+    openid_type = "group" if getattr(event, "group_openid", None) else "c2c"
+    return await resolve_openid_qq(uid, openid_type)
 
 
 async def resolve_openid_qq(openid: str, openid_type: str = "group") -> Optional[str]:

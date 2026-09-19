@@ -32,6 +32,7 @@ from .commands import auth as auth_cmd
 from .commands import help as help_cmd
 from .commands import sync as sync_cmd
 from .commands import work as work_cmd
+from ._lib.bots import AtSenderBot, resolve_sender_qq
 
 # ------------------ 启动时构建命令注册表 ------------------
 
@@ -71,6 +72,7 @@ _cli = on_message(rule=_is_command, priority=10, block=True)
 
 @_cli.handle()
 async def _dispatch(bot: Bot, event: Event, state: T_State) -> None:
+    bot = AtSenderBot(bot, event)  # 所有后续 bot.send 自动 @ 发送者
     match: MessageMatch = state.get("_cli_match")
     if match is None:
         return
@@ -97,6 +99,17 @@ async def _dispatch(bot: Bot, event: Event, state: T_State) -> None:
     if command.admin_only and not await SUPERUSER(bot, event):
         await bot.send(event, f"⚠️ {command.display} 仅管理员可用")
         return
+
+    # 注册绑定校验：require_registered 的命令需先识别出真实 QQ（未注册绑定的用户拿不到）
+    if command.require_registered:
+        qq = await resolve_sender_qq(event)
+        if not qq:
+            await bot.send(
+                event,
+                "⚠️ 请先在站点完成注册绑定（注册页会给你一个验证码，"
+                "发给机器人即可），再使用此功能。",
+            )
+            return
 
     try:
         handler = load_handler(command.handler)
@@ -132,6 +145,7 @@ _bare = on_message(rule=_is_bare_code, priority=11, block=True)
 
 @_bare.handle()
 async def _bare_handler(bot: Bot, event: Event, state: T_State) -> None:
+    bot = AtSenderBot(bot, event)
     code = state.get("_bare_code")
     if not code:
         return

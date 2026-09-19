@@ -25,6 +25,7 @@ from nonebot import logger
 from nonebot.adapters import Bot, Event
 
 from .._lib import aitools
+from .._lib.bots import resolve_sender_qq
 from .._lib.cli import Command, CommandError, Option, ParseResult
 
 _ENV_PATH = Path(__file__).resolve().parents[2] / ".env.prod"
@@ -178,10 +179,13 @@ async def _chat(
 
 # ------------------ SearXNG 联网搜索 ------------------
 
-async def _web_search(query: str) -> tuple[List[Dict[str, str]], List[str]]:
+async def _web_search(
+    query: str, *, limit: Optional[int] = None
+) -> tuple[List[Dict[str, str]], List[str]]:
     """经本地 SearXNG 的 JSON API 检索。
 
     返回 (结果列表[{title,url,content}], 无响应引擎说明列表)。
+    limit: 最多返回多少条（None 或 <=0 时用 _SEARCH_RESULTS 默认值）。
     要求 SearXNG 的 settings.yml 中 search.formats 包含 json。
     """
     cfg = get_config()
@@ -203,8 +207,9 @@ async def _web_search(query: str) -> tuple[List[Dict[str, str]], List[str]]:
         data = resp.json()
     except ValueError as exc:
         raise RuntimeError("SearXNG 未返回 JSON（请确认 search.formats 已启用 json）") from exc
+    cap = limit if (limit and limit > 0) else _SEARCH_RESULTS
     items: List[Dict[str, str]] = []
-    for item in (data.get("results") or [])[:_SEARCH_RESULTS]:
+    for item in (data.get("results") or [])[:cap]:
         record = {
             "title": str(item.get("title") or "").strip(),
             "url": str(item.get("url") or "").strip(),
@@ -258,6 +263,12 @@ async def _web_search_tool(args: Dict[str, str]) -> str:
     return _build_reference(items)
 
 
+aitools.register_package(
+    aitools.Package(
+        name="web",
+        description="联网搜索：通过本地 SearXNG 检索网页，获取最新资讯、版本信息、攻略资料等。",
+    )
+)
 aitools.register_tool(
     aitools.Tool(
         namespace="web",
@@ -267,7 +278,8 @@ aitools.register_tool(
         params={"query": "搜索关键词（必填，精炼，不要包含'帮我搜一下'等客套话）"},
     )
 )
-logger.info(f"[ai] 已注册工具：{', '.join(t.fullname for t in aitools.registered_tools())}")
+logger.info(f"[ai] 已注册工具包：{', '.join(p.name for p in aitools.registered_packages())}"
+            f"（工具：{', '.join(t.fullname for t in aitools.registered_tools())}）")
 
 
 # ------------------ 消息切分 ------------------
@@ -311,6 +323,7 @@ ASK_COMMAND = Command(
     ),
     handler="commands.ai:ask",
     allow_positional=True,
+    require_registered=True,
     notes=(
         "群里使用需 @机器人；问题直接跟在命令后面写。",
         "自动携带最近几轮对话作为上下文；/ai 重置 可清空。",
@@ -325,6 +338,7 @@ RESET_COMMAND = Command(
     usage="",
     examples=("/ai 重置",),
     handler="commands.ai:reset",
+    require_registered=True,
 )
 
 CONFIG_COMMAND = Command(
@@ -357,8 +371,33 @@ CONFIG_COMMAND = Command(
     ),
 )
 
+SEARCHWEB_COMMAND = Command(
+    ns_en="searchweb", ns_zh="搜网",
+    quick=("搜网", "searchweb"),
+    summary="联网搜索（只返回简介和链接）",
+    brief="<关键词>",
+    usage="<关键词> [选项]",
+    examples=(
+        "/搜网 泰拉瑞亚 1.4.5 更新内容",
+        "/搜网 量子纠缠 是什么",
+        "/搜网 -n 10 Rust 2024 版本特性",
+    ),
+    options=(
+        Option(long="limit", short="n", value_name="<数>", kind="int",
+               default=5, min_value=1, max_value=20,
+               help="返回条数，默认 5，上限 20"),
+    ),
+    handler="commands.ai:search_web",
+    allow_positional=True,
+    require_registered=True,
+    notes=(
+        "只返回简介和链接，不回灌完整正文；需要总结请用 /ai 提问让机器人联网搜索并归纳。",
+        "走本地 SearXNG，需要管理员已配置 AI_SEARXNG_URL。",
+    ),
+)
+
 # 供 cli_router 收集；命名与其他模块统一为 COMMANDS
-COMMANDS = (ASK_COMMAND, RESET_COMMAND, CONFIG_COMMAND)
+COMMANDS = (ASK_COMMAND, RESET_COMMAND, CONFIG_COMMAND, SEARCHWEB_COMMAND)
 
 
 # ------------------ handlers ------------------
@@ -377,10 +416,14 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     local = bool(result.get("local"))
     model_override = result.get("model")
 
+    # 把调用者真实 QQ 注入 aitools 上下文，供 site:add 等需要身份的工具使用
+    caller_qq = await resolve_sender_qq(event)
+    qq_token = aitools.set_current_user_qq(caller_qq)
+
     history = _HISTORY.setdefault(session, [])
     messages: List[Dict[str, str]] = []
     # 用户人设提示词 + 自动生成的工具协议手册（模型据此学会何时/如何调用 web:search）
-    system_parts = [get_config()["system_prompt"], aitools.tool_manual()]
+    system_parts = [get_config()["system_prompt"], aitools.package_catalog()]
     system_content = "\n\n".join(part for part in system_parts if part)
     if system_content:
         messages.append({"role": "system", "content": system_content})
@@ -394,6 +437,8 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
             await bot.send(event, "🤔 继续思考中…")
         elif kind == "tool_call" and payload.get("name") == "web:search":
             await bot.send(event, f"🔍 联网搜索：{payload.get('args', {}).get('query', '')}")
+        elif kind == "tool_call" and payload.get("name") == "site:add":
+            await bot.send(event, f"📤 上传作品到站点：{payload.get('args', {}).get('title', '')}")
         # tool_error 的详细日志由 _lib/aitools 统一输出
 
     async def _chat_once(msgs: List[Dict[str, str]]) -> str:
@@ -413,6 +458,8 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         logger.exception("[ai] 提问处理异常")
         await bot.send(event, f"⚠️ 执行出错：{exc}")
         return
+    finally:
+        aitools.reset_current_user_qq(qq_token)
 
     if not answer:
         answer = "（模型没有返回有效内容）"
@@ -485,3 +532,53 @@ async def config(bot: Bot, event: Event, result: ParseResult) -> None:
     if updates:
         lines.append(f"本次更新：{'、'.join(sorted(updates))}")
     await bot.send(event, "\n".join(lines))
+
+
+# ------------------ /搜网 handler ------------------
+
+def _fmt_web_brief(items: List[Dict[str, str]]) -> str:
+    """精简格式：标题+简介+链接（不回灌完整正文，给群友直接看链接用）。
+
+    与 _build_reference 的区别：后者拼成完整参考资料块回灌给 AI 用于推理；
+    本函数只展示 content 作为简介一行 + URL，省去正文重复，便于群友快速点开。
+    """
+    if not items:
+        return "暂无结果。"
+    lines = []
+    for i, r in enumerate(items, 1):
+        lines.append(f"{i}. {r['title']}")
+        content = (r.get("content") or "").strip()
+        if content:
+            if len(content) > 120:
+                content = content[:119] + "…"
+            lines.append(f"   {content}")
+        lines.append(f"   {r['url']}")
+    return "\n".join(lines)
+
+
+async def search_web(bot: Bot, event: Event, result: ParseResult) -> None:
+    """联网搜索并只回简介+链接，不回灌完整正文。"""
+    query = " ".join(result.positional).strip()
+    if not query:
+        await bot.send(
+            event,
+            "⚠️ 请把搜索关键词直接跟在命令后面。\n\n"
+            "用法：/搜网 <关键词>\n例：/搜网 泰拉瑞亚 最新版本",
+        )
+        return
+    limit = result.get("limit", 5)
+    try:
+        items, dead_engines = await _web_search(query, limit=limit)
+    except RuntimeError as exc:
+        logger.error(f"[ai /搜网] 搜索失败：{exc}")
+        await bot.send(event, f"⚠️ 搜索失败：{exc}")
+        return
+    if not items:
+        msg = f"🔍 没搜到「{query}」相关结果。"
+        if dead_engines:
+            msg += "\n（部分搜索引擎无响应，可稍后重试）"
+        await bot.send(event, msg)
+        return
+    body = _fmt_web_brief(items)
+    head = f"🔍 「{query}」的搜索结果（{len(items)} 条）："
+    await bot.send(event, f"{head}\n{body}")

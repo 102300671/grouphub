@@ -67,11 +67,11 @@ grouphub/
 │   ├── bot.py            # 入口：注册双适配器
 │   └── plugins/
 │       ├── cli_router.py         # GNU 命令分发入口（唯一 on_message 路由）
-│       ├── commands/             # 命令实现：work / auth / sync / help
+│       ├── commands/             # 命令实现：work / auth / sync / ai / help
 │       ├── group_member_sync.py  # QQ 群成员白名单同步（事件 + HTTP）
 │       ├── avatar_sync.py        # 头像同步（事件 + HTTP）
 │       ├── auth_code.py          # 注册绑定码核验 + 登录验证码通道（HTTP）
-│       └── _lib/                 # 适配器调度 / backend 客户端 / cli 命令解析核心
+│       └── _lib/                 # 适配器调度 / backend 客户端 / cli 命令解析 / AI 工具调用
 ├── deploy/               # setup.sh 一键部署 + systemd + docker-compose + nginx.conf
 ├── docs/                 # PRD 文档
 ├── files/                # zfile 本地存储根（works/、covers/、avatars/ 等）

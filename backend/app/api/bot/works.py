@@ -25,11 +25,15 @@ router = APIRouter(dependencies=[Depends(get_authenticated_bot)])
 
 def _compact(w: models.Work, score: Optional[int] = None) -> Dict[str, Any]:
     """给 QQ 消息用的精简作品结构。"""
+    summary = (w.summary or "").strip()
+    if len(summary) > 200:
+        summary = summary[:199] + "…"
     out = {
         "id": w.id,
         "title": w.title,
         "author": w.author,
         "type": w.type,
+        "summary": summary or None,
         "uploader_nickname": w.uploader.nickname if w.uploader else None,
     }
     if score is not None:
@@ -154,9 +158,10 @@ def submit_work(
 ):
     """群内「安利」提交作品。
 
-    - QQ 无账号 → 自动建用户（随机密码，昵称取群名片）
-    - 同名作品已存在 → 不新建，返回 duplicate 提示（插件提示群友去站点标记支持者）
-    - 提交者自动挂 recommender 关系
+    - 不传 uploader_qq：qq 即提交者=上传者，QQ 无账号 → 自动建用户（随机密码，昵称取群名片）
+    - 传 uploader_qq（特权参数，机器人/管理员用）：uploader 必须是已在站点注册的账号，
+      否则驳回（不自动建号）；qq 仍走自动建号作为提交者记录来源
+    - 同名作品已存在 → 不新建，返回 duplicate 提示（提示群友去站点标记支持）
     """
     dup = db.query(models.Work).filter(models.Work.title == payload.title).first()
     if dup is not None:
@@ -167,10 +172,26 @@ def submit_work(
             "message": f"已存在同名作品（ID={dup.id}），请群友到站点标记支持",
         }
 
+    # 解析 uploader：特权模式 vs 旧行为
+    uploader_qq = (payload.uploader_qq or "").strip()
+    if uploader_qq:
+        uploader = db.query(models.User).filter(models.User.qq == uploader_qq).first()
+        if uploader is None:
+            return {
+                "ok": False,
+                "duplicate": False,
+                "message": f"上传者 QQ {uploader_qq} 未在站点注册，无法指定为上传者",
+            }
+    else:
+        uploader = None  # 占位，下方 _get_or_create_user 兜底
+
     try:
         user, created = _get_or_create_user(db, payload.qq, settings)
     except ValueError as exc:
         return {"ok": False, "duplicate": False, "message": str(exc)}
+
+    # 特权模式下 uploader 已校验过；非特权模式 uploader = 提交者本人
+    uploader_obj = uploader if uploader is not None else user
 
     w = models.Work(
         title=payload.title,
@@ -178,7 +199,7 @@ def submit_work(
         type=payload.type or models.WorkType.OTHER,
         source_work_id=payload.source_work_id,
         summary=payload.summary,
-        uploader_id=user.id,
+        uploader_id=uploader_obj.id,
         tags_json=payload.tags or [],
         status=models.WorkStatus.PUBLISHED,
     )
@@ -190,10 +211,9 @@ def submit_work(
         if url:
             db.add(models.WorkLink(work_id=w.id, site_name=link.get("site_name"), url=url))
 
-    # 提交者即首 recommender
-    db.add(
-        models.UserWork(user_id=user.id, work_id=w.id, relation_roles=["recommender"], reading_status=None)
-    )
+    # 提交者已通过 works.uploader_id 体现"上传者"身份；
+    # 不再额外挂 user_works.relation_roles 关系（参见 models.RelationRole 注释：
+    # uploader 不在 relation_roles 枚举内，/user-works 接口会按 uploader_id 独立列出"我上传的"作品）。
 
     db.commit()
     db.refresh(w)
@@ -201,6 +221,7 @@ def submit_work(
         "ok": True,
         "duplicate": False,
         "created_user": created,
+        "designated_uploader": uploader is not None,  # 是否走了特权模式
         "work": _compact(w),
         "message": f"已入库：{w.title}（ID={w.id}）",
     }

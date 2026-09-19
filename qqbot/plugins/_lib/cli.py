@@ -153,6 +153,7 @@ class Command:
     options: Tuple[Option, ...] = ()
     handler: str = ""                        # "commands.work:search"
     admin_only: bool = False
+    require_registered: bool = False          # 需要用户已注册绑定（cli_router 统一拦截）
     notes: Tuple[str, ...] = ()
     allow_positional: bool = False           # 仅 /帮助 例外：接受命令名作位置参数
 
