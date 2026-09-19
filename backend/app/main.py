@@ -53,11 +53,13 @@ from .api.fanworks import router as fanworks_router  # noqa: E402
 from .api.bot.members import router as bot_members_router  # noqa: E402
 from .api.bot.auth import router as bot_auth_router  # noqa: E402
 from .api.bot.works import router as bot_works_router  # noqa: E402
+from .api.bot.ai import router as bot_ai_router  # noqa: E402
 
 # 插件用内部 API，统一加 /bot 前缀
 app.include_router(bot_members_router, prefix="/bot/members", tags=["[Bot 内部] 群成员白名单"])
-app.include_router(bot_auth_router, prefix="/bot/auth", tags=["[Bot 内部] 验证码通道"])
+app.include_router(bot_auth_router, prefix="/bot/auth", tags="[Bot 内部] 验证码通道")
 app.include_router(bot_works_router, prefix="/bot/works", tags=["[Bot 内部] 作品（热门/搜索/安利）"])
+app.include_router(bot_ai_router, prefix="/bot/ai", tags=["[Bot 内部] AI 配置与会话"])
 
 # 用户侧 API
 app.include_router(auth_router, prefix="/auth", tags=["认证"])
@@ -66,6 +68,9 @@ app.include_router(uploads_router, prefix="/uploads", tags=["文件上传"])
 app.include_router(reviews_router, prefix="/works", tags=["评论"])
 app.include_router(forum_router, prefix="/topics", tags=["论坛"])
 app.include_router(fanworks_router, prefix="/fanworks", tags=["同人创作"])
+
+from .api.ai import router as ai_router  # noqa: E402
+app.include_router(ai_router, prefix="/ai", tags=["AI 助手"])
 
 # 管理端 API（需 role=admin；前端通过 /auth/me.role 判断是否展示切换按钮）
 app.include_router(admin_router, prefix="/admin", tags=["管理员"])

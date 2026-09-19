@@ -21,10 +21,10 @@ from typing import Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
-from nonebot import logger
+from nonebot import get_driver, logger
 from nonebot.adapters import Bot, Event
 
-from .._lib import aitools
+from .._lib import aisync, aitools
 from .._lib.bots import resolve_sender_qq
 from .._lib.cli import Command, CommandError, Option, ParseResult
 
@@ -65,6 +65,27 @@ _MAX_ROUNDS = max(1, int(os.getenv("AI_MAX_HISTORY", "6") or "6"))
 _SEARCH_RESULTS = max(1, int(os.getenv("AI_SEARCH_RESULTS", "5") or "5"))
 _MAX_TOOL_STEPS = max(1, int(os.getenv("AI_MAX_TOOL_STEPS", "2") or "2"))
 _TIMEOUT = float(os.getenv("AI_TIMEOUT", "120") or "120")
+
+
+# ------------------ 启动时把默认远程配置同步到后端（前端 AI 页据此展示） ------------------
+
+async def _sync_builtin_default() -> None:
+    cfg = get_config()
+    try:
+        await aisync.push_default(
+            {
+                "api_base": cfg["api_base"],
+                "api_key": cfg["api_key"],
+                "model": cfg["model"],
+                "system_prompt": cfg["system_prompt"],
+                "searxng_url": cfg["searxng_url"],
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 后端离线不阻断启动
+        logger.warning(f"[ai] 启动同步默认配置失败（问答仍可用本地默认）：{exc}")
+
+
+get_driver().on_startup(_sync_builtin_default)
 
 
 def _read_file_config() -> Dict[str, str]:
@@ -123,24 +144,21 @@ def _http() -> httpx.AsyncClient:
 
 
 async def _chat(
-    messages: List[Dict[str, str]], *, local: bool, model_override: Optional[str] = None
+    messages: List[Dict[str, str]], *, base: str, key: str, model: Optional[str]
 ) -> str:
-    """调用 chat/completions，返回首条回复文本。失败抛 CommandError（中文可读）。"""
-    cfg = get_config()
-    base = (cfg["local_base_url"] if local else cfg["api_base"]).rstrip("/")
-    key = cfg["local_key"] if local else cfg["api_key"]
-    model = model_override or (cfg["local_model"] if local else cfg["model"])
+    """调用 chat/completions，返回首条回复文本。失败抛 CommandError（中文可读）。
 
+    base/key/model 由调用方按「用户生效配置」或「.env.prod 默认」解析后传入。
+    """
     if not base:
         raise CommandError(
             "⚠️ 尚未配置 AI 接口地址。\n"
             "管理员可用 /ai 配置 --base-url <URL> 设置，或在 .env.prod 填 AI_API_BASE。"
         )
-    if not key and not local:
+    if not model:
         raise CommandError(
-            "⚠️ 尚未配置 API 密钥。\n"
-            "管理员可用 /ai 配置 --key <KEY> 设置，或在 .env.prod 填 AI_API_KEY。\n"
-            "（本地模型通常无需密钥，可加 --local 走本地端点）"
+            "⚠️ 尚未配置模型名。\n"
+            "管理员可用 /ai 配置 --model <名> 设置；本地模型请确认已指定 AI_LOCAL_MODEL。"
         )
 
     url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
@@ -164,8 +182,7 @@ async def _chat(
         except Exception:  # noqa: BLE001
             detail = resp.text[:200]
         logger.error(f"[ai] 接口返回 {resp.status_code}：{detail}")
-        hint = "\n（本地模型请确认服务已启动、模型已 pull，且模型名正确）" if local else ""
-        raise CommandError(f"⚠️ AI 接口返回 {resp.status_code}：{detail}{hint}")
+        raise CommandError(f"⚠️ AI 接口返回 {resp.status_code}：{detail}")
 
     try:
         content = resp.json()["choices"][0]["message"]["content"]
@@ -396,11 +413,79 @@ SEARCHWEB_COMMAND = Command(
     ),
 )
 
+MINE_CONFIGS_COMMAND = Command(
+    ns_en="ai", ns_zh="问", sub_en="configs", sub_zh="我的配置",
+    summary="查看可用 AI 配置（内置默认 + 你在网页端新建的）",
+    brief="",
+    usage="",
+    examples=("/ai 我的配置",),
+    handler="commands.ai:list_mine",
+    require_registered=True,
+    notes=(
+        "在网页端 AI 页面可新建/编辑自己的配置（用你自己的 API Key）；",
+        "然后用「/ai 切换 <配置名>」在群内切过去。",
+    ),
+)
+
+USE_CONFIG_COMMAND = Command(
+    ns_en="ai", ns_zh="问", sub_en="use", sub_zh="切换",
+    summary="切换本群对话使用的 AI 配置",
+    brief="<配置名>",
+    usage="<配置名>",
+    examples=(
+        "/ai 切换 我的DeepSeek",
+        "/ai 切换 默认",
+    ),
+    handler="commands.ai:use_config",
+    allow_positional=True,
+    require_registered=True,
+    notes=("配置名可用 /ai 我的配置 查看；本地配置仅网页端可用，群内切不过去。",),
+)
+
 # 供 cli_router 收集；命名与其他模块统一为 COMMANDS
-COMMANDS = (ASK_COMMAND, RESET_COMMAND, CONFIG_COMMAND, SEARCHWEB_COMMAND)
+COMMANDS = (
+    ASK_COMMAND,
+    RESET_COMMAND,
+    MINE_CONFIGS_COMMAND,
+    USE_CONFIG_COMMAND,
+    CONFIG_COMMAND,
+    SEARCHWEB_COMMAND,
+)
 
 
 # ------------------ handlers ------------------
+
+def _event_group_id(event: Event) -> str:
+    """从事件取群号：OneBot 自带 group_id；QQ 官方没有，解析 session id，
+    再不行用 SYNC_GROUPS 首个兜底。"""
+    gid = getattr(event, "group_id", None)
+    if gid:
+        return str(gid)
+    try:
+        sid = event.get_session_id() or ""
+    except Exception:  # noqa: BLE001
+        sid = ""
+    parts = sid.split("_")
+    if len(parts) >= 2 and parts[0] == "group":
+        return parts[1]
+    return (os.getenv("SYNC_GROUPS", "").split(",")[0].strip() or "default")
+
+
+async def _group_title(bot: Bot, group_id: str) -> Optional[str]:
+    """尝试取群名称作为会话标题（OneBot 有 get_group_info；失败返回 None）。"""
+    if not group_id.isdigit():
+        return None
+    try:
+        info = await bot.get_group_info(group_id=int(group_id))
+        name = (
+            info.get("group_name")
+            if isinstance(info, dict)
+            else getattr(info, "group_name", None)
+        )
+        return f"群聊 · {name}" if name else None
+    except Exception:  # noqa: BLE001
+        return None
+
 
 async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     question = " ".join(result.positional).strip()
@@ -413,17 +498,69 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         return
 
     session = _session_key(event)
-    local = bool(result.get("local"))
+    use_local_flag = bool(result.get("local"))
     model_override = result.get("model")
 
     # 把调用者真实 QQ 注入 aitools 上下文，供 site:add 等需要身份的工具使用
     caller_qq = await resolve_sender_qq(event)
     qq_token = aitools.set_current_user_qq(caller_qq)
 
-    history = _HISTORY.setdefault(session, [])
+    cfg = get_config()
+    base = ""
+    key = ""
+    endpoint_model: Optional[str] = None
+    history: List[Dict[str, str]] = []
+    conversation_id: Optional[int] = None
+    backend_ok = False
+    user_system_prompt: Optional[str] = None
+
+    if not use_local_flag:
+        # 优先走后端：解析该用户在网页端/群内选中的生效配置 + 同步会话
+        try:
+            active = await aisync.get_active_config(caller_qq)
+            if active.get("kind") == "local":
+                await bot.send(
+                    event,
+                    "⚠️ 你当前选中的是「本地配置」：请求走你自己设备的本地网络，"
+                    "机器人所在的服务器访问不到你的本地模型。\n"
+                    "请在网页端 AI 页面使用该配置，或用「/ai 切换 默认」切回远程配置。",
+                )
+                aitools.reset_current_user_qq(qq_token)
+                return
+            base = (active.get("api_base") or "").rstrip("/")
+            key = active.get("api_key") or ""
+            endpoint_model = active.get("model") or None
+            user_system_prompt = active.get("system_prompt")
+
+            group_id = _event_group_id(event)
+            group_title = await _group_title(bot, group_id)
+            conv = await aisync.group_conversation(caller_qq, group_id, group_title)
+            conversation_id = conv.get("conversation_id")
+            history = [
+                {"role": m["role"], "content": m["content"]}
+                for m in (conv.get("messages") or [])
+            ]
+            backend_ok = True
+        except Exception as exc:  # noqa: BLE001 后端离线 → 降级本地默认
+            logger.warning(f"[ai] 后端配置/会话获取失败，降级 .env.prod 默认：{exc}")
+
+    if not base:
+        # 降级路径：.env.prod / data/ai_config.json；--local 走机器人本地端点
+        if use_local_flag:
+            base = (cfg["local_base_url"] or "").rstrip("/")
+            key = cfg["local_key"] or ""
+            endpoint_model = cfg["local_model"]
+        else:
+            base = (cfg["api_base"] or "").rstrip("/")
+            key = cfg["api_key"] or ""
+            endpoint_model = cfg["model"]
+        history = _HISTORY.setdefault(session, [])
+
+    final_model = model_override or endpoint_model
+
     messages: List[Dict[str, str]] = []
-    # 用户人设提示词 + 自动生成的工具协议手册（模型据此学会何时/如何调用 web:search）
-    system_parts = [get_config()["system_prompt"], aitools.package_catalog()]
+    # 生效配置的人设提示词（用户自建配置没写则回退默认）+ 工具协议手册
+    system_parts = [user_system_prompt or cfg["system_prompt"], aitools.package_catalog()]
     system_content = "\n\n".join(part for part in system_parts if part)
     if system_content:
         messages.append({"role": "system", "content": system_content})
@@ -442,7 +579,7 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         # tool_error 的详细日志由 _lib/aitools 统一输出
 
     async def _chat_once(msgs: List[Dict[str, str]]) -> str:
-        return await _chat(msgs, local=local, model_override=model_override)
+        return await _chat(msgs, base=base, key=key, model=final_model)
 
     try:
         answer = await aitools.run_agent_turn(
@@ -464,11 +601,25 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     if not answer:
         answer = "（模型没有返回有效内容）"
 
-    # 只把最终问答记入历史，工具调用过程留在本轮 messages，不污染后续上下文
-    history.append({"role": "user", "content": question})
-    history.append({"role": "assistant", "content": answer})
-    if len(history) > _MAX_ROUNDS * 2:
-        del history[: len(history) - _MAX_ROUNDS * 2]
+    # 持久化：后端在线 → 同步到群会话；否则走内存历史（降级模式）
+    if backend_ok and conversation_id is not None:
+        try:
+            await aisync.append_messages(
+                conversation_id,
+                caller_qq,
+                [
+                    {"role": "user", "content": question},
+                    {"role": "assistant", "content": answer},
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001 同步失败不影响已发出的回答
+            logger.warning(f"[ai] 群会话消息同步失败：{exc}")
+    else:
+        # 只把最终问答记入历史，工具调用过程留在本轮 messages，不污染后续上下文
+        history.append({"role": "user", "content": question})
+        history.append({"role": "assistant", "content": answer})
+        if len(history) > _MAX_ROUNDS * 2:
+            del history[: len(history) - _MAX_ROUNDS * 2]
 
     for chunk in _split_message(answer):
         await bot.send(event, chunk)
@@ -476,7 +627,21 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
 
 async def reset(bot: Bot, event: Event, result: ParseResult) -> None:
     session = _session_key(event)
-    if _HISTORY.pop(session, None) is not None:
+    had_memory = _HISTORY.pop(session, None) is not None
+    caller_qq = await resolve_sender_qq(event)
+    archived = False
+    try:
+        group_id = _event_group_id(event)
+        archived = await aisync.reset_conversation(caller_qq, group_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[ai] 后端会话归档失败：{exc}")
+    if archived:
+        await bot.send(
+            event,
+            "🧹 已重置群内 AI 会话并归档，下次提问将开启独立新会话"
+            "（旧记录仍可在网页端 AI 页面查看）。",
+        )
+    elif had_memory:
         await bot.send(event, "🧹 已清空本会话的 AI 对话记忆。")
     else:
         await bot.send(event, "本会话当前没有对话记忆。")
@@ -516,6 +681,20 @@ async def config(bot: Bot, event: Event, result: ParseResult) -> None:
             await bot.send(event, f"⚠️ 配置保存失败：{exc}")
             return
         _HISTORY.clear()
+        # 重新同步内置默认到后端（前端 AI 页跟着更新）
+        try:
+            fresh = get_config()
+            await aisync.push_default(
+                {
+                    "api_base": fresh["api_base"],
+                    "api_key": fresh["api_key"],
+                    "model": fresh["model"],
+                    "system_prompt": fresh["system_prompt"],
+                    "searxng_url": fresh["searxng_url"],
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[ai] 默认配置同步后端失败：{exc}")
 
     cfg = get_config()
     lines = [
@@ -582,3 +761,77 @@ async def search_web(bot: Bot, event: Event, result: ParseResult) -> None:
     body = _fmt_web_brief(items)
     head = f"🔍 「{query}」的搜索结果（{len(items)} 条）："
     await bot.send(event, f"{head}\n{body}")
+
+
+# ------------------ /ai 我的配置 / /ai 切换 ------------------
+
+async def list_mine(bot: Bot, event: Event, result: ParseResult) -> None:
+    """列出内置默认 + 用户自建配置，标注当前生效项。"""
+    qq = await resolve_sender_qq(event)
+    try:
+        data = await aisync.list_configs(qq)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"[ai 我的配置] 查询失败：{exc}")
+        await bot.send(event, f"⚠️ 配置查询失败：{exc}")
+        return
+
+    active_id = data.get("active_id", 0)
+    lines = ["⚙️ 可用 AI 配置："]
+    for item in data.get("items", []):
+        tags = []
+        if item.get("is_builtin"):
+            tags.append("内置默认·免费")
+        if item.get("kind") == "local":
+            tags.append("本地·仅网页端")
+        if item.get("id") == active_id:
+            tags.append("✓ 当前使用")
+        tag = f" [{ '，'.join(tags) }]" if tags else ""
+        model = item.get("model") or "（未设模型）"
+        lines.append(f"· {item['name']} — {model}{tag}")
+    lines.append("")
+    lines.append("切换：/ai 切换 <配置名>；新配置请在网页端 AI 页面新建。")
+    await bot.send(event, "\n".join(lines))
+
+
+async def use_config(bot: Bot, event: Event, result: ParseResult) -> None:
+    """按名称切换用户生效配置。"""
+    name = " ".join(result.positional).strip()
+    if not name:
+        await bot.send(
+            event,
+            "⚠️ 请指定配置名。\n用法：/ai 切换 <配置名>\n可用 /ai 我的配置 查看。",
+        )
+        return
+
+    qq = await resolve_sender_qq(event)
+    try:
+        data = await aisync.list_configs(qq)
+    except Exception as exc:  # noqa: BLE001
+        await bot.send(event, f"⚠️ 配置查询失败：{exc}")
+        return
+
+    items = data.get("items", [])
+    target_id: Optional[int] = None
+    if name in ("默认", "default", "内置", "内置默认", "默认配置"):
+        target_id = 0
+    else:
+        for item in items:
+            if item.get("name") == name:
+                target_id = item.get("id")
+                break
+    if target_id is None:
+        await bot.send(
+            event,
+            f"⚠️ 找不到名为「{name}」的配置。\n"
+            "可用 /ai 我的配置 查看；新配置请先在网页端 AI 页面新建。",
+        )
+        return
+
+    try:
+        await aisync.activate(qq, target_id)
+    except Exception as exc:  # noqa: BLE001
+        await bot.send(event, f"⚠️ 切换失败：{exc}")
+        return
+    chosen = next((i for i in items if i["id"] == target_id), None)
+    shown = chosen["name"] if chosen else "内置默认"
+    await bot.send(event, f"✅ 已切换为「{shown}」，后续对话使用该配置。")

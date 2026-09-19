@@ -1,0 +1,93 @@
+"""机器人 ↔ 后端 AI 联动客户端。
+
+封装 /bot/ai/* 内部接口，承载「前端与机器人 AI 配置互通、群会话同步到前端」：
+  - push_default()：把机器人 .env.prod 解析出的默认远程配置同步给后端；
+  - get_active_config(qq)：取该用户当前生效配置（前端自建的也在这里生效）；
+  - list_configs(qq) / activate(qq, config_id)：群内查看/切换配置；
+  - group_conversation()：获取/创建群会话并拿回历史消息；
+  - append_messages() / reset_conversation()：持久化对话、重置归档。
+
+网络失败时异常向上抛，由调用方决定降级策略（不阻断问答本身）。
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from nonebot import logger
+
+from .client import backend_client
+
+
+async def push_default(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """同步内置默认远程配置；返回后端 details。"""
+    resp = await backend_client.post("/bot/ai/default", json=cfg)
+    resp.raise_for_status()
+    data = resp.json()
+    logger.info(f"[aisync] 默认配置已同步到后端：{data.get('details')}")
+    return data
+
+
+async def get_active_config(qq: str) -> Dict[str, Any]:
+    """用户生效配置：{config_id, kind, api_base, api_key, model, system_prompt, searxng_url}。"""
+    resp = await backend_client.get("/bot/ai/active", params={"qq": qq})
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def list_configs(qq: str) -> Dict[str, Any]:
+    """配置列表：{ok, items:[{id,name,kind,model,is_builtin,is_active,...}], active_id}。"""
+    resp = await backend_client.get("/bot/ai/configs", params={"qq": qq})
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def activate(qq: str, config_id: int) -> None:
+    """切换配置；config_id=0 切回内置默认。"""
+    resp = await backend_client.post(
+        "/bot/ai/activate", json={"qq": qq, "config_id": int(config_id)}
+    )
+    resp.raise_for_status()
+
+
+async def group_conversation(
+    qq: str, group_id: str, title: Optional[str] = None
+) -> Dict[str, Any]:
+    """获取/创建群会话：details = {conversation_id, title, messages:[{role,content}]}。"""
+    resp = await backend_client.post(
+        "/bot/ai/conversation",
+        json={"qq": qq, "group_id": group_id, "title": title},
+    )
+    resp.raise_for_status()
+    return resp.json().get("details") or {}
+
+
+async def append_messages(
+    conversation_id: int, qq: str, messages: List[Dict[str, str]]
+) -> None:
+    """批量追加消息（一轮问答 = user + assistant 两条）。"""
+    resp = await backend_client.post(
+        f"/bot/ai/conversation/{int(conversation_id)}/messages",
+        json={"qq": qq, "messages": messages},
+    )
+    resp.raise_for_status()
+
+
+async def reset_conversation(qq: str, group_id: str) -> bool:
+    """归档当前群会话；返回是否真的有会话被归档。"""
+    resp = await backend_client.post(
+        "/bot/ai/conversation/reset",
+        json={"qq": qq, "group_id": group_id},
+    )
+    resp.raise_for_status()
+    return resp.json().get("message") == "ok"
+
+
+__all__ = [
+    "push_default",
+    "get_active_config",
+    "list_configs",
+    "activate",
+    "group_conversation",
+    "append_messages",
+    "reset_conversation",
+]

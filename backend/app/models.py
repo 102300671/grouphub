@@ -299,3 +299,71 @@ class Fanwork(Base):
 
     author = relationship("User", lazy="selectin")
     work = relationship("Work", lazy="selectin")
+
+
+# ------------------ AI 配置 / 会话 / 消息 ------------------
+
+class AIConfig(Base):
+    """AI 接口配置。
+
+    - owner_id 为 NULL：系统内置默认配置（唯一一行），由 nonebot2 启动时把
+      .env.prod 解析出的远程配置同步过来，所有用户可见但不可改；
+    - owner_id 指向用户：用户自建配置（BYOK），kind=remote 走后端代理，
+      kind=local 由浏览器直连用户本地模型端点（用户本地网络）。
+    is_active：该用户当前选中的配置（每个用户至多一行）；没有选中项时生效内置默认。
+    """
+    __tablename__ = "ai_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    name = Column(String(100), nullable=False)
+    kind = Column(String(20), nullable=False, default="remote", server_default="remote")  # remote | local
+    api_base = Column(String(500), nullable=True)
+    api_key = Column(String(500), nullable=True)
+    model = Column(String(200), nullable=True)
+    system_prompt = Column(Text, nullable=True)
+    searxng_url = Column(String(500), nullable=True)  # 仅内置默认使用
+    is_active = Column(Boolean, nullable=False, default=False, server_default="0")
+    created_at = Column(DateTime, default=_now, nullable=False)
+    updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
+
+    owner = relationship("User", lazy="selectin")
+
+
+class AIConversation(Base):
+    """AI 会话：网页端会话（source=web）或群内会话（source=group，按用户+群独立）。
+
+    群内会话由机器人同步，用户在前端可查看历史，但仅展示用途；
+    archived_at 非空表示已被「/ai 重置」归档，下次提问会开新会话（旧会话保留）。
+    """
+    __tablename__ = "ai_conversations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    source = Column(String(20), nullable=False, default="web", server_default="web")  # web | group
+    title = Column(String(255), nullable=True)
+    group_id = Column(String(30), nullable=True, index=True)
+    config_id = Column(Integer, ForeignKey("ai_configs.id"), nullable=True)
+    archived_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=_now, nullable=False)
+    updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
+
+    owner = relationship("User", lazy="selectin")
+    config = relationship("AIConfig", lazy="selectin")
+    messages = relationship(
+        "AIMessage",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="AIMessage.id",
+    )
+
+
+class AIMessage(Base):
+    """AI 会话内的一条消息（system 不落库，仅存 user / assistant）。"""
+    __tablename__ = "ai_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(Integer, ForeignKey("ai_conversations.id"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=_now, nullable=False)

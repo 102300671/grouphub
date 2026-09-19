@@ -37,6 +37,7 @@ export const routes: RouteRecordRaw[] = [
       { path: "fanworks/new", name: "fanwork-create", component: () => import("@/views/FanworkEditView.vue"), meta: { title: "发布同人", mode: "user" } },
       { path: "fanworks/:id", name: "fanwork-detail", component: () => import("@/views/FanworkDetailView.vue"), meta: { title: "同人作品详情", mode: "user" }, props: true },
       { path: "fanworks/:id/edit", name: "fanwork-edit", component: () => import("@/views/FanworkEditView.vue"), meta: { title: "编辑同人", mode: "user" }, props: true },
+      { path: "ai", name: "ai", component: () => import("@/views/AIView.vue"), meta: { title: "AI 助手", mode: "user" } },
       { path: "me", name: "me", component: () => import("@/views/MeView.vue"), meta: { title: "我的", mode: "user" } },
     ],
   },

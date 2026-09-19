@@ -1,5 +1,9 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 import type {
+  AIConfigListOut,
+  AIConfigPayload,
+  AIConversationDetailOut,
+  AIConversationListOut,
   AuthTokenOut,
   BindCodeOut,
   BindStatusOut,
@@ -172,3 +176,161 @@ export const authClient = {
     }>({ url: "/auth/user-works", method: "GET" });
   },
 };
+
+/* ----------------- AI 助手 ----------------- */
+
+export const aiClient = {
+  listConfigs() {
+    return request<AIConfigListOut>({ url: "/ai/configs", method: "GET" });
+  },
+  createConfig(data: AIConfigPayload) {
+    return request({ url: "/ai/configs", method: "POST", data });
+  },
+  updateConfig(id: number, data: Partial<AIConfigPayload>) {
+    return request({ url: `/ai/configs/${id}`, method: "PATCH", data });
+  },
+  deleteConfig(id: number) {
+    return request<SimpleMessageOut>({ url: `/ai/configs/${id}`, method: "DELETE" });
+  },
+  activateConfig(id: number) {
+    return request<AIConfigListOut>({
+      url: `/ai/configs/${id}/activate`,
+      method: "POST",
+    });
+  },
+  testConfig(data: { api_base: string; api_key?: string; model?: string }) {
+    return request<SimpleMessageOut>({
+      url: "/ai/configs/test",
+      method: "POST",
+      data,
+    });
+  },
+  listConversations() {
+    return request<AIConversationListOut>({ url: "/ai/conversations", method: "GET" });
+  },
+  createConversation() {
+    return request<AIConversationDetailOut>({
+      url: "/ai/conversations",
+      method: "POST",
+      data: {},
+    });
+  },
+  getConversation(id: number) {
+    return request<AIConversationDetailOut>({
+      url: `/ai/conversations/${id}`,
+      method: "GET",
+    });
+  },
+  deleteConversation(id: number) {
+    return request<SimpleMessageOut>({
+      url: `/ai/conversations/${id}`,
+      method: "DELETE",
+    });
+  },
+  /** 本地配置浏览器直连时：单独持久化一条消息 */
+  appendMessage(id: number, role: "user" | "assistant", content: string) {
+    return request<SimpleMessageOut>({
+      url: `/ai/conversations/${id}/messages`,
+      method: "POST",
+      data: { role, content },
+    });
+  },
+};
+
+/**
+ * 远程配置流式对话（走后端代理）。
+ * POST /ai/chat，逐行读取后端 SSE：
+ *   data: {"type":"delta","text":"..."} / {"type":"done"} / {"type":"error","message":"..."}
+ * 返回 Promise（done 结束 / error 抛出）。
+ */
+export async function streamRemoteChat(
+  conversationId: number,
+  content: string,
+  onDelta: (text: string) => void,
+): Promise<void> {
+  const token = getToken();
+  const resp = await fetch(`${apiBase}/ai/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ conversation_id: conversationId, content }),
+  });
+  if (!resp.ok || !resp.body) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(text || `请求失败（HTTP ${resp.status}）`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload) continue;
+      try {
+        const evt = JSON.parse(payload);
+        if (evt.type === "delta") onDelta(evt.text || "");
+        else if (evt.type === "error") throw new Error(evt.message || "上游错误");
+      } catch (e) {
+        if (e instanceof SyntaxError) continue;
+        throw e;
+      }
+    }
+  }
+}
+
+/**
+ * 本地配置浏览器直连：直接 POST 到用户本地模型端点（OpenAI 兼容，流式）。
+ * 不持久化（调用方自行通过 aiClient.appendMessage 落库）。
+ */
+export async function streamLocalChat(
+  endpoint: { api_base: string; api_key?: string | null; model: string },
+  messages: Array<{ role: string; content: string }>,
+  onDelta: (text: string) => void,
+): Promise<void> {
+  const base = (endpoint.api_base || "").replace(/\/$/, "");
+  const url = base.endsWith("/chat/completions")
+    ? base
+    : `${base}/chat/completions`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (endpoint.api_key) headers.Authorization = `Bearer ${endpoint.api_key}`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model: endpoint.model, messages, stream: true }),
+  });
+  if (!resp.ok || !resp.body) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(text || `本地端点返回 HTTP ${resp.status}（请确认服务已启动且允许跨域）`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const chunk = JSON.parse(data);
+        const piece = chunk.choices?.[0]?.delta?.content || "";
+        if (piece) onDelta(piece);
+      } catch (SyntaxError) {
+        // 忽略半行/心跳
+      }
+    }
+  }
+}

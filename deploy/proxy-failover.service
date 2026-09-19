@@ -1,0 +1,16 @@
+[Unit]
+Description=HTTP proxy failover relay (Clash/v2rayN) for SearXNG
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jianying
+ExecStart=/usr/bin/python3 /usr/local/bin/proxy_failover.py
+Restart=always
+RestartSec=2
+# 只监听 127.0.0.1，不需要额外权限；日志走 journald：
+#   journalctl -u proxy-failover -f
+
+[Install]
+WantedBy=multi-user.target

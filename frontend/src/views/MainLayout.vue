@@ -116,6 +116,7 @@ onBeforeUnmount(stopBindPoll);
           <RouterLink to="/works" active-class="active">作品库</RouterLink>
           <RouterLink to="/fanworks" active-class="active">同人</RouterLink>
           <RouterLink to="/forum" active-class="active">论坛</RouterLink>
+          <RouterLink to="/ai" active-class="active">AI</RouterLink>
           <RouterLink to="/me" active-class="active">我的</RouterLink>
         </nav>
 
@@ -160,6 +161,9 @@ onBeforeUnmount(stopBindPoll);
       </RouterLink>
       <RouterLink to="/forum" active-class="active">
         <span class="tab-icon">💬</span>论坛
+      </RouterLink>
+      <RouterLink to="/ai" active-class="active">
+        <span class="tab-icon">🤖</span>AI
       </RouterLink>
       <RouterLink to="/me" active-class="active">
         <span class="tab-icon">👤</span>我的

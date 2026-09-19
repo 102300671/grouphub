@@ -251,3 +251,67 @@ export interface AdminSummary {
   admin_count_in_env: number;
   current_admin_qqs: string[];
 }
+
+// =============== AI 助手 ===============
+
+export type AIConfigKind = "remote" | "local";
+
+export interface AIConfig {
+  id: number;
+  name: string;
+  kind: AIConfigKind;
+  api_base?: string | null;
+  api_key?: string | null; // 已打码
+  model?: string | null;
+  system_prompt?: string | null;
+  searxng_url?: string | null;
+  is_active: boolean;
+  is_builtin: boolean;
+}
+
+export interface AIConfigListOut {
+  ok: boolean;
+  items: AIConfig[];
+  active_id: number; // 0 = 内置默认
+}
+
+export interface AIConfigPayload {
+  name: string;
+  kind?: AIConfigKind;
+  api_base?: string | null;
+  api_key?: string | null;
+  model?: string | null;
+  system_prompt?: string | null;
+}
+
+export type AIConversationSource = "web" | "group";
+
+export interface AIConversation {
+  id: number;
+  title?: string | null;
+  source: AIConversationSource;
+  group_id?: string | null;
+  config_id?: number | null;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+  last_message?: string | null;
+}
+
+export interface AIMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export interface AIConversationListOut {
+  ok: boolean;
+  items: AIConversation[];
+}
+
+export interface AIConversationDetailOut {
+  ok: boolean;
+  conversation: AIConversation;
+  messages: AIMessage[];
+}

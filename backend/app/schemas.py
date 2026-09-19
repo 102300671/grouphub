@@ -305,3 +305,140 @@ class FanworkPatchIn(BaseModel):
     body: Optional[str] = None
     attachments: Optional[List[Dict[str, Any]]] = None
     status: Optional[str] = None
+
+
+# =============== AI 配置 / 会话 ===============
+
+class AIConfigIn(BaseModel):
+    """新建 AI 配置。"""
+    name: str = Field(..., min_length=1, max_length=100)
+    kind: str = Field("remote", pattern="^(remote|local)$")
+    api_base: Optional[str] = Field(None, max_length=500)
+    api_key: Optional[str] = Field(None, max_length=500)
+    model: Optional[str] = Field(None, max_length=200)
+    system_prompt: Optional[str] = None
+
+
+class AIConfigPatchIn(BaseModel):
+    """编辑自己的 AI 配置；任意字段可选。"""
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    api_base: Optional[str] = Field(None, max_length=500)
+    api_key: Optional[str] = Field(None, max_length=500)
+    model: Optional[str] = Field(None, max_length=200)
+    system_prompt: Optional[str] = None
+
+
+class AIConfigTestIn(BaseModel):
+    """测试远程配置连通性（不落库）。"""
+    api_base: str = Field(..., min_length=1, max_length=500)
+    api_key: Optional[str] = Field(None, max_length=500)
+    model: Optional[str] = None
+
+
+class AIConfigOut(BaseModel):
+    id: int
+    name: str
+    kind: str
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None  # 已打码
+    model: Optional[str] = None
+    system_prompt: Optional[str] = None
+    searxng_url: Optional[str] = None
+    is_active: bool = False
+    is_builtin: bool = False
+
+
+class AIConfigListOut(BaseModel):
+    ok: bool
+    items: List[AIConfigOut]
+    active_id: int  # 0 表示内置默认
+
+
+class AIConversationIn(BaseModel):
+    title: Optional[str] = Field(None, max_length=255)
+
+
+class AIMessageOut(BaseModel):
+    id: int
+    role: str
+    content: str
+    created_at: datetime
+
+
+class AIConversationOut(BaseModel):
+    id: int
+    title: Optional[str] = None
+    source: str
+    group_id: Optional[str] = None
+    config_id: Optional[int] = None
+    archived: bool = False
+    created_at: datetime
+    updated_at: datetime
+    last_message: Optional[str] = None
+
+
+class AIConversationListOut(BaseModel):
+    ok: bool
+    items: List[AIConversationOut]
+
+
+class AIConversationDetailOut(BaseModel):
+    ok: bool
+    conversation: AIConversationOut
+    messages: List[AIMessageOut]
+
+
+class AIMessageIn(BaseModel):
+    """本地配置浏览器直连时，用它单独持久化一条消息。"""
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., min_length=1)
+
+
+class AIChatIn(BaseModel):
+    """网页端远程对话（SSE 流式返回）。"""
+    conversation_id: int
+    content: str = Field(..., min_length=1)
+    config_id: Optional[int] = None  # 不传则用当前生效配置
+
+
+# ---- Bot 内部 ----
+
+class AIBuiltinSyncIn(BaseModel):
+    """机器人启动/配置变更时同步内置默认远程配置。"""
+    api_base: str = Field(..., min_length=1, max_length=500)
+    api_key: Optional[str] = Field(None, max_length=500)
+    model: Optional[str] = Field(None, max_length=200)
+    system_prompt: Optional[str] = None
+    searxng_url: Optional[str] = Field(None, max_length=500)
+
+
+class AIActiveConfigOut(BaseModel):
+    """给机器人的生效配置（含真实密钥，仅 X-Bot-Token 通道）。"""
+    config_id: int  # 0 = 内置默认
+    kind: str
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    system_prompt: Optional[str] = None
+    searxng_url: Optional[str] = None
+
+
+class AIActivateIn(BaseModel):
+    qq: str = Field(..., min_length=1)
+    config_id: int  # 0 = 切回内置默认
+
+
+class AIBotConversationIn(BaseModel):
+    qq: str = Field(..., min_length=1)
+    group_id: str = Field(..., min_length=1)
+    title: Optional[str] = Field(None, max_length=255)
+
+
+class AIBotMessagesIn(BaseModel):
+    qq: str = Field(..., min_length=1)
+    messages: List[AIMessageIn]
+
+
+class AIBotResetIn(BaseModel):
+    qq: str = Field(..., min_length=1)
+    group_id: str = Field(..., min_length=1)
