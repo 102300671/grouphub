@@ -24,7 +24,15 @@ import AIConfigModal from "@/components/AIConfigModal.vue";
 
 const groups = ref<AIGroupTree[]>([]);
 const currentId = ref<number | null>(null);
-const bubbles = ref<Array<{ role: string; content: string; pending?: boolean; error?: boolean }>>([]);
+interface AIBubble {
+  role: string;
+  content: string;
+  pending?: boolean;
+  error?: boolean;
+  reasoning?: string;
+  toolCalls?: Array<{ name: string; args: Record<string, unknown>; summary: string }>;
+}
+const bubbles = ref<Array<AIBubble>>([]);
 
 const configs = ref<AIConfig[]>([]);
 const activeId = ref<number>(0);
@@ -306,15 +314,12 @@ async function send() {
 
   input.value = "";
   bubbles.value.push({ role: "user", content });
-  const assistantBubble: {
-    role: string;
-    content: string;
-    pending: boolean;
-    error?: boolean;
-  } = {
+  const assistantBubble: AIBubble = {
     role: "assistant",
     content: "",
     pending: true,
+    reasoning: "",
+    toolCalls: [],
   };
   bubbles.value.push(assistantBubble);
   sending.value = true;
@@ -324,12 +329,34 @@ async function send() {
     assistantBubble.content += piece;
     scrollToBottom();
   };
+  const onReasoning = (piece: string) => {
+    assistantBubble.reasoning = (assistantBubble.reasoning || "") + piece;
+    scrollToBottom();
+  };
+  const onToolCall = (name: string, args: Record<string, unknown>) => {
+    // 工具轮正文丢弃：模型输出工具块后最终回答会重新生成
+    assistantBubble.content = "";
+    assistantBubble.toolCalls = assistantBubble.toolCalls || [];
+    assistantBubble.toolCalls.push({ name, args, summary: "" });
+    scrollToBottom();
+  };
+  const onToolResult = (name: string, summary: string) => {
+    const list = assistantBubble.toolCalls || [];
+    const last = list[list.length - 1];
+    if (last && last.name === name) last.summary = summary;
+    scrollToBottom();
+  };
 
   try {
     if (isLocal) {
       await sendLocal(convId, cfg as AIConfig, content, onDelta);
     } else {
-      await sendRemote(convId, onDelta);
+      await sendRemote(convId, {
+        onDelta,
+        onReasoning,
+        onToolCall,
+        onToolResult,
+      });
     }
     assistantBubble.pending = false;
   } catch (e) {
@@ -345,10 +372,18 @@ async function send() {
 }
 
 /** 远程：后端代理，服务端负责持久化两条消息 */
-async function sendRemote(convId: number, onDelta: (t: string) => void) {
+async function sendRemote(
+  convId: number,
+  handlers: {
+    onDelta: (t: string) => void;
+    onReasoning: (t: string) => void;
+    onToolCall: (name: string, args: Record<string, unknown>) => void;
+    onToolResult: (name: string, summary: string) => void;
+  },
+) {
   // 最后一条 user bubble 即本次提问
   const question = bubbles.value[bubbles.value.length - 2].content;
-  await streamRemoteChat(convId, question, onDelta);
+  await streamRemoteChat(convId, question, handlers);
 }
 
 /** 本地：浏览器直连，自行持久化 user / assistant 消息 */
@@ -628,10 +663,34 @@ function timeLabel(conv: AIConversation): string {
             {{ b.role === "user" ? "🧑" : "🤖" }}
           </div>
           <div class="bubble" :class="{ error: b.error }">
-            <span v-if="b.pending && !b.content" class="typing">
+            <details v-if="b.reasoning" class="ai-reasoning" open>
+              <summary>🧠 思考过程</summary>
+              <div class="ai-reasoning-body">{{ b.reasoning }}</div>
+            </details>
+            <div v-for="(tc, j) in b.toolCalls" :key="j" class="ai-tool">
+              <span class="ai-tool-name">{{
+                tc.name === "web:search" ? "🔍 联网搜索" : "🔧 " + tc.name
+              }}</span>
+              <span
+                v-if="tc.name === 'web:search' && tc.args && tc.args.query"
+                class="ai-tool-query"
+              >
+                「{{ tc.args.query }}」
+              </span>
+              <span v-if="tc.summary" class="ai-tool-summary">{{ tc.summary }}</span>
+            </div>
+            <span
+              v-if="
+                b.pending &&
+                !b.content &&
+                !b.reasoning &&
+                (!b.toolCalls || !b.toolCalls.length)
+              "
+              class="typing"
+            >
               <i></i><i></i><i></i>
             </span>
-            <template v-else>{{ b.content }}</template>
+            <template v-if="b.content">{{ b.content }}</template>
           </div>
         </div>
       </div>
@@ -1126,5 +1185,50 @@ function timeLabel(conv: AIConversation): string {
   .sidebar-toggle {
     display: block;
   }
+}
+
+.ai-reasoning {
+  margin: 2px 0 8px;
+  font-size: 12px;
+  color: #8b90a0;
+  background: rgba(127, 140, 255, 0.06);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+.ai-reasoning summary {
+  cursor: pointer;
+  user-select: none;
+}
+.ai-reasoning-body {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #a0a4b3;
+}
+.ai-tool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12px;
+  color: #7d82f5;
+  background: rgba(125, 130, 245, 0.08);
+  border: 1px solid rgba(125, 130, 245, 0.18);
+  border-radius: 8px;
+  padding: 3px 8px;
+  margin: 2px 0 6px;
+}
+.ai-tool-name {
+  font-weight: 600;
+}
+.ai-tool-query {
+  color: #4b4f5e;
+}
+.ai-tool-summary {
+  color: #8b90a0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

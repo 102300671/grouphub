@@ -14,8 +14,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -25,7 +27,7 @@ from nonebot import get_driver, logger
 from nonebot.adapters import Bot, Event
 
 from .._lib import aisync, aitools
-from .._lib.bots import resolve_sender_qq
+from .._lib.bots import qq_openapi_request, resolve_sender_qq
 from .._lib.cli import Command, CommandError, Option, ParseResult
 
 _ENV_PATH = Path(__file__).resolve().parents[2] / ".env.prod"
@@ -339,6 +341,93 @@ logger.info(f"[ai] 已注册工具包：{', '.join(p.name for p in aitools.regis
 
 
 # ------------------ 消息切分 ------------------
+
+def _c2c_openid(event: Event) -> Optional[str]:
+    """官方单聊（C2C）用户 openid；群聊 / OneBot 返回 None。"""
+    oid = _event_openid(event)
+    if oid and oid.startswith("c2c:"):
+        return oid[len("c2c:"):]
+    return None
+
+
+def _stream_chunks(text: str, size: int = 50) -> List[str]:
+    """按标点/换行优先切块，每块约 size 字符（流式打字机节奏）。"""
+    if not text:
+        return []
+    if len(text) <= size:
+        return [text]
+    chunks: List[str] = []
+    cur = ""
+    for ch in text:
+        cur += ch
+        if ch in "。！？；\n" and len(cur) >= 6:
+            chunks.append(cur)
+            cur = ""
+        elif len(cur) >= size:
+            chunks.append(cur)
+            cur = ""
+    if cur:
+        chunks.append(cur)
+    return chunks or [text]
+
+
+async def _send_c2c_stream(
+    bot: Bot, event: Event, openid: str, text: str, msg_id: Optional[str] = None
+) -> None:
+    """QQ 官方单聊流式发送：/v2/users/{openid}/stream_messages。
+
+    协议：input_mode=replace（每帧传完整当前文本），input_state 1=生成中 / 10=完成，
+    index 从 0 递增，首帧返回 stream_msg_id 供后续帧携带；帧间 ~300ms 打字机节奏。
+    失败降级为普通分段消息。
+    """
+    if not text:
+        return
+    chunks = _stream_chunks(text)
+    msg_seq = int(time.time() * 1000) % 65536
+    stream_msg_id: Optional[str] = None
+    index = 0
+    accumulated = ""
+    try:
+        for chunk in chunks:
+            accumulated += chunk
+            body: Dict[str, object] = {
+                "input_mode": "replace",
+                "input_state": 1,
+                "content_type": "markdown",
+                "content_raw": accumulated,
+                "msg_seq": msg_seq,
+                "index": index,
+            }
+            if msg_id:
+                body["msg_id"] = msg_id
+            if stream_msg_id:
+                body["stream_msg_id"] = stream_msg_id
+            resp = await qq_openapi_request(
+                bot, "POST", f"/v2/users/{openid}/stream_messages", json_body=body
+            )
+            if stream_msg_id is None and isinstance(resp, dict) and resp.get("id"):
+                stream_msg_id = str(resp["id"])
+            index += 1
+            await asyncio.sleep(0.3)
+        body = {
+            "input_mode": "replace",
+            "input_state": 10,
+            "content_type": "markdown",
+            "content_raw": accumulated,
+            "msg_seq": msg_seq,
+            "index": index,
+            "stream_msg_id": stream_msg_id,
+        }
+        if msg_id:
+            body["msg_id"] = msg_id
+        await qq_openapi_request(
+            bot, "POST", f"/v2/users/{openid}/stream_messages", json_body=body
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[ai] C2C 流式发送失败，降级普通消息：{exc}")
+        for chunk in _split_message(text):
+            await bot.send(event, chunk)
+
 
 def _split_message(text: str, limit: int = 1500) -> List[str]:
     """按段落边界切长回复（QQ 官方通道对单条消息长度有限制）。"""
@@ -869,11 +958,8 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     messages.append({"role": "user", "content": question})
 
     async def _on_agent_event(kind: str, payload: Dict[str, object]) -> None:
-        if kind == "before_chat" and payload.get("step") == 0:
-            await bot.send(event, "🤔 思考中…")
-        elif kind == "before_chat":
-            await bot.send(event, "🤔 继续思考中…")
-        elif kind == "tool_call" and payload.get("name") == "web:search":
+        # 群聊精简：不发送「思考中」类占位；只保留工具调用过程的可见回复
+        if kind == "tool_call" and payload.get("name") == "web:search":
             await bot.send(event, f"🔍 联网搜索：{payload.get('args', {}).get('query', '')}")
         elif kind == "tool_call" and payload.get("name") == "site:add":
             await bot.send(event, f"📤 上传作品到站点：{payload.get('args', {}).get('title', '')}")
@@ -922,8 +1008,13 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         if len(history) > _MAX_ROUNDS * 2:
             del history[: len(history) - _MAX_ROUNDS * 2]
 
-    for chunk in _split_message(answer):
-        await bot.send(event, chunk)
+    c2c_uid = _c2c_openid(event)
+    if _is_private(event) and c2c_uid:
+        # QQ 官方单聊：流式发送（stream_messages，打字机效果）
+        await _send_c2c_stream(bot, event, c2c_uid, answer, msg_id=getattr(event, "id", None) or None)
+    else:
+        for chunk in _split_message(answer):
+            await bot.send(event, chunk)
 
 
 async def reset(bot: Bot, event: Event, result: ParseResult) -> None:

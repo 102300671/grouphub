@@ -296,7 +296,12 @@ export const aiClient = {
 export async function streamRemoteChat(
   conversationId: number,
   content: string,
-  onDelta: (text: string) => void,
+  handlers: {
+    onDelta: (text: string) => void;
+    onReasoning?: (text: string) => void;
+    onToolCall?: (name: string, args: Record<string, unknown>) => void;
+    onToolResult?: (name: string, summary: string) => void;
+  },
 ): Promise<void> {
   const token = getToken();
   const resp = await fetch(`${apiBase}/ai/chat`, {
@@ -326,7 +331,12 @@ export async function streamRemoteChat(
       if (!payload) continue;
       try {
         const evt = JSON.parse(payload);
-        if (evt.type === "delta") onDelta(evt.text || "");
+        if (evt.type === "delta") handlers.onDelta(evt.text || "");
+        else if (evt.type === "reasoning") handlers.onReasoning?.(evt.text || "");
+        else if (evt.type === "tool_call")
+          handlers.onToolCall?.(evt.name || "", evt.args || {});
+        else if (evt.type === "tool_result")
+          handlers.onToolResult?.(evt.name || "", evt.summary || "");
         else if (evt.type === "error") throw new Error(evt.message || "上游错误");
       } catch (e) {
         if (e instanceof SyntaxError) continue;

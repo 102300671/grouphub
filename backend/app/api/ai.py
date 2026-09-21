@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import AsyncGenerator, Dict, List, Optional
 
 import httpx
@@ -23,6 +24,86 @@ router = APIRouter()
 # 网页端携带的最近消息条数；上游请求超时
 _HISTORY_LIMIT = 20
 _TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+_MAX_TOOL_STEPS = 3
+
+# 文本协议工具（与 qqbot aitools 一致的轻量子集：仅联网搜索）
+_TOOL_BLOCK_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
+_TOOL_RESULT_RE = re.compile(r"<tool_result\b.*?</tool_result>", re.DOTALL | re.IGNORECASE)
+
+_TOOL_CATALOG = (
+    "你有联网搜索工具可用。当问题涉及最新资讯、实时数据、近期版本/数值、攻略资料"
+    "或你不确定的事实，且你已有的知识不足以可靠回答时，按如下协议调用搜索：\n\n"
+    "<tool_call>\nweb:search\nquery=搜索关键词\n</tool_call>\n\n"
+    "（query 必填，精炼，不要包含客套话。）系统返回 <tool_result> 后，参考其中带 [序号]"
+    "的资料回答并标注引用；若搜索无结果或资料不足，如实说明，不要编造。"
+)
+
+
+def _parse_tool_calls(text: str) -> List[Dict[str, object]]:
+    """解析 <tool_call> 块：首行 命名空间:工具名，后续 key=value 或整体 JSON。"""
+    calls: List[Dict[str, object]] = []
+    for match in _TOOL_BLOCK_RE.finditer(text or ""):
+        body = match.group(1).strip()
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        name = lines[0].strip()
+        args: Dict[str, str] = {}
+        tail = lines[1:]
+        if tail and tail[0][:1] in "{[":
+            try:
+                parsed = json.loads("\n".join(tail))
+                if isinstance(parsed, dict):
+                    args = {str(k): ("" if v is None else str(v)) for k, v in parsed.items()}
+                    tail = []
+            except json.JSONDecodeError:
+                pass
+        for line in tail:
+            if "=" in line:
+                key, value = line.split("=", 1)
+                args[key.strip()] = value.strip()
+        calls.append({"name": name, "args": args, "raw": match.group(0)})
+    return calls
+
+
+def _strip_tool_calls(text: str) -> str:
+    """剥离工具块与残留 result 块，压缩空行。"""
+    out = _TOOL_BLOCK_RE.sub("", text or "")
+    out = _TOOL_RESULT_RE.sub("", out)
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+async def _web_search_backend(
+    query: str, searxng_url: str, limit: int = 6
+) -> str:
+    """经本地 SearXNG JSON API 搜索，返回带序号的参考资料文本。"""
+    base = searxng_url.rstrip("/")
+    url = base if base.endswith("/search") else f"{base}/search"
+    try:
+        resp = await httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0)).get(
+            url,
+            params={"q": query, "format": "json", "language": "zh-CN"},
+            headers={"Accept": "application/json"},
+        )
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        return f"错误：无法连接搜索服务：{exc}"
+    if resp.status_code != 200:
+        return f"错误：搜索服务返回 {resp.status_code}：{resp.text[:120]}"
+    try:
+        data = resp.json()
+    except ValueError:
+        return "错误：搜索服务未返回 JSON。"
+    items = (data.get("results") or [])[:limit]
+    if not items:
+        return "未搜索到任何结果。可以换一个更精炼的关键词重试一次；若仍无结果就直接回答用户。"
+    blocks = []
+    for i, item in enumerate(items, 1):
+        title = str(item.get("title") or "").strip()
+        url_ = str(item.get("url") or "").strip()
+        content = str(item.get("content") or "").strip()
+        blocks.append(f"[{i}] {title}\n{url_}\n{content}".rstrip())
+    return "\n\n".join(blocks)
 
 
 # =================== 配置 ===================
@@ -482,60 +563,115 @@ async def _sse_response(
     question: Optional[str] = None,
     cfg_row: Optional[models.AIConfig] = None,
 ) -> AsyncGenerator[bytes, None]:
-    """转发上游 SSE，转成前端统一事件格式，并在结束后落库 assistant 消息。"""
+    """转发上游 SSE：思考内容（reasoning）、工具调用流程、正文增量；结束后落库 assistant。
+
+    事件：{"type":"reasoning","text"} / {"type":"tool_call","name","args"} /
+    {"type":"tool_result","name","summary"} / {"type":"delta","text"} /
+    {"type":"error","message"} / {"type":"done"}。
+    """
 
     def sse(event: dict) -> bytes:
         return f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8")
 
-    body = {"model": model, "messages": request_messages, "stream": True}
     headers = {"Authorization": f"Bearer {key}"}
-    collected = ""
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            async with client.stream(
-                "POST", url, json=body, headers=headers
-            ) as resp:
-                if resp.status_code != 200:
-                    text = (await resp.aread()).decode("utf-8", "ignore")[:300]
-                    yield sse({"type": "error", "message": f"上游返回 {resp.status_code}：{text}"})
-                    return
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                        delta = chunk["choices"][0].get("delta", {})
-                        piece = delta.get("content") or ""
-                    except (ValueError, KeyError, IndexError):
-                        continue
-                    if piece:
-                        collected += piece
-                        yield sse({"type": "delta", "text": piece})
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
-        yield sse({"type": "error", "message": f"连接上游失败：{exc}"})
-        return
+    # 配置了 SearXNG 才注入联网工具说明；工具循环仅在有搜索地址时启用
+    searxng_url = ""
+    if cfg_row is not None:
+        searxng_url = (getattr(cfg_row, "searxng_url", None) or "").strip()
+    messages: List[Dict[str, str]] = []
+    if searxng_url:
+        sys_idx = next(
+            (i for i, m in enumerate(request_messages) if m.get("role") == "system"),
+            None,
+        )
+        if sys_idx is not None:
+            merged = request_messages[sys_idx]["content"] + "\n\n" + _TOOL_CATALOG
+            messages = list(request_messages)
+            messages[sys_idx] = {"role": "system", "content": merged}
+        else:
+            messages = [{"role": "system", "content": _TOOL_CATALOG}] + list(request_messages)
+    else:
+        messages = list(request_messages)
 
-    if not collected.strip():
+    collected_final = ""
+    used_tool = False
+    for _step in range(_MAX_TOOL_STEPS):
+        collected = ""
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                async with client.stream(
+                    "POST",
+                    url,
+                    json={"model": model, "messages": messages, "stream": True},
+                    headers=headers,
+                ) as resp:
+                    if resp.status_code != 200:
+                        text = (await resp.aread()).decode("utf-8", "ignore")[:300]
+                        yield sse({"type": "error", "message": f"上游返回 {resp.status_code}：{text}"})
+                        return
+                    async for line in resp.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {})
+                        except (ValueError, KeyError, IndexError):
+                            continue
+                        r_piece = delta.get("reasoning_content") or ""
+                        if r_piece:
+                            yield sse({"type": "reasoning", "text": r_piece})
+                        piece = delta.get("content") or ""
+                        if piece:
+                            collected += piece
+                            yield sse({"type": "delta", "text": piece})
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            yield sse({"type": "error", "message": f"连接上游失败：{exc}"})
+            return
+
+        calls = _parse_tool_calls(collected)
+        if not calls:
+            collected_final = _strip_tool_calls(collected) or collected.strip()
+            break
+
+        used_tool = True
+        for call in calls:
+            name = str(call.get("name") or "")
+            args = call.get("args") or {}
+            yield sse({"type": "tool_call", "name": name, "args": args})
+            if name == "web:search" and searxng_url:
+                result = await _web_search_backend(str(args.get("query") or ""), searxng_url)
+            else:
+                result = f"错误：工具 {name} 不可用或未配置搜索地址。"
+            summary = result.replace("\n", " ").strip()[:120]
+            yield sse({"type": "tool_result", "name": name, "summary": summary})
+            messages.append({"role": "assistant", "content": collected})
+            messages.append(
+                {"role": "user", "content": f'<tool_result name="{name}">\n{result}\n</tool_result>'}
+            )
+    else:
+        collected_final = _strip_tool_calls(collected) or collected.strip()
+
+    if not collected_final.strip():
         yield sse({"type": "error", "message": "模型返回了空内容。"})
         return
 
-    # 用独立会话落库 assistant
+    # 用独立会话落库 assistant（只存最终正文，不含思考与工具过程）
     with SessionLocal() as db:
         conv = db.get(models.AIConversation, conversation_id)
         if conv is not None:
             db.add(
                 models.AIMessage(
-                    conversation_id=conv.id, role="assistant", content=collected
+                    conversation_id=conv.id, role="assistant", content=collected_final
                 )
             )
             if question:
                 import asyncio
 
                 await asyncio.to_thread(
-                    ai_service.try_ai_title, db, conv, question, collected, cfg_row
+                    ai_service.try_ai_title, db, conv, question, collected_final, cfg_row
                 )
             ai_service.touch(conv)
             db.commit()
