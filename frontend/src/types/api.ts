@@ -291,11 +291,47 @@ export interface AIConversation {
   title?: string | null;
   source: AIConversationSource;
   group_id?: string | null;
+  ai_group_id?: number | null;
+  folder_id?: number | null;
+  is_default: boolean;
   config_id?: number | null;
   archived: boolean;
   created_at: string;
   updated_at: string;
   last_message?: string | null;
+}
+
+export interface AIFolder {
+  id: number;
+  name: string;
+  openid?: string | null;
+  conversations: AIConversation[];
+}
+
+export interface AIGroupTree {
+  id: number;
+  kind: "qq" | "web";
+  name: string;
+  qq?: string | null;
+  folders: AIFolder[];
+  conversations: AIConversation[];
+}
+
+export interface AIGroupTreeListOut {
+  ok: boolean;
+  groups: AIGroupTree[];
+}
+
+export interface AIConversationCreate {
+  ai_group_id: number;
+  folder_id?: number | null;
+  title?: string | null;
+}
+
+export interface AIConversationPatch {
+  title?: string | null;
+  ai_group_id?: number | null;
+  folder_id?: number | null;
 }
 
 export interface AIMessage {

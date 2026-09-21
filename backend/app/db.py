@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Generator
 from urllib.parse import urlparse, unquote
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import get_settings
@@ -75,6 +75,11 @@ def _migrate_sqlite(engine) -> None:
             "group_openid": "VARCHAR(128)",
             "group_name": "VARCHAR(100)",
         },
+        "ai_conversations": {
+            "ai_group_id": "INTEGER",
+            "folder_id": "INTEGER",
+            "is_default": "BOOLEAN NOT NULL DEFAULT 0",
+        },
     }
     with engine.connect() as conn:
         for table, columns in wanted.items():
@@ -88,6 +93,115 @@ def _migrate_sqlite(engine) -> None:
         conn.commit()
 
 
+def _migrate_qq_bindings(engine) -> None:
+    """绑定表重建：旧约束（openid 唯一）阻止同一用户多群绑定，重建为按群记录。"""
+    with engine.begin() as conn:
+        exists = conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name IN "
+            "('uq_qq_openid_openid', 'sqlite_autoindex_qq_openid_bindings_1')"
+        )).fetchone()
+        if not exists:
+            return
+        conn.execute(text("ALTER TABLE qq_openid_bindings RENAME TO qq_openid_bindings_old"))
+        conn.execute(text("""CREATE TABLE qq_openid_bindings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                qq VARCHAR(20) NOT NULL,
+                openid VARCHAR(128) NOT NULL,
+                openid_type VARCHAR(10) NOT NULL DEFAULT 'group',
+                group_id VARCHAR(30),
+                group_openid VARCHAR(128),
+                group_name VARCHAR(100),
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"""))
+        conn.execute(text("""INSERT INTO qq_openid_bindings
+               (id, qq, openid, openid_type, group_id, group_openid, group_name, created_at, updated_at)
+               SELECT id, qq, openid, openid_type, group_id, group_openid, group_name, created_at, updated_at
+               FROM qq_openid_bindings_old"""))
+        conn.execute(text("DROP TABLE qq_openid_bindings_old"))
+        conn.execute(text("CREATE UNIQUE INDEX uq_qq_openid_group ON qq_openid_bindings(group_openid)"
+            " WHERE openid_type='group'"))
+        conn.execute(text("CREATE UNIQUE INDEX uq_qq_openid_c2c ON qq_openid_bindings(openid)"
+            " WHERE openid_type='c2c'"))
+        print("[db] qq_openid_bindings 已重建为按群记录")
+
+
+def _migrate_ai_groups(engine) -> None:
+    """旧 AI 会话归位：group 会话 -> QQ 大组 + 群组；web 会话 -> 前端大组。"""
+    from sqlalchemy.orm import Session
+    from . import models  # noqa: F401
+
+    def _folder_name(conv) -> str:
+        if conv.source == "group":
+            t = (conv.title or "").strip()
+            if t.startswith("群聊 · "):
+                return t[len("群聊 · "):][:50]
+            return f"群 {conv.group_id or '?'}"
+        return "默认"
+
+    with Session(engine) as db:
+        convs = (
+            db.query(models.AIConversation)
+            .filter(models.AIConversation.ai_group_id.is_(None))
+            .all()
+        )
+        if not convs:
+            return
+        for conv in convs:
+            user = conv.owner
+            if conv.source == "group":
+                g = (
+                    db.query(models.AIGroup)
+                    .filter(
+                        models.AIGroup.owner_id == user.id,
+                        models.AIGroup.kind == "qq",
+                        models.AIGroup.qq == user.qq,
+                    )
+                    .first()
+                )
+                if g is None:
+                    g = models.AIGroup(
+                        owner_id=user.id, kind="qq", qq=user.qq, name=f"QQ {user.qq}"
+                    )
+                    db.add(g)
+                    db.flush()
+                folder = (
+                    db.query(models.AIFolder)
+                    .filter(
+                        models.AIFolder.group_id == g.id,
+                        models.AIFolder.openid.is_(None),
+                        models.AIFolder.name == _folder_name(conv),
+                    )
+                    .first()
+                )
+                if folder is None:
+                    folder = models.AIFolder(
+                        group_id=g.id,
+                        owner_id=user.id,
+                        name=_folder_name(conv),
+                        openid=None,
+                    )
+                    db.add(folder)
+                    db.flush()
+                conv.ai_group_id = g.id
+                conv.folder_id = folder.id
+            else:
+                g = (
+                    db.query(models.AIGroup)
+                    .filter(
+                        models.AIGroup.owner_id == user.id,
+                        models.AIGroup.kind == "web",
+                    )
+                    .first()
+                )
+                if g is None:
+                    g = models.AIGroup(owner_id=user.id, kind="web", name="我的空间")
+                    db.add(g)
+                    db.flush()
+                conv.ai_group_id = g.id
+        db.commit()
+
+
 def init_db() -> None:
     """首次启动时创建所有表。"""
     # 先导入所有模型，确保 ORM 已注册
@@ -95,3 +209,5 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_sqlite(engine)
+    _migrate_ai_groups(engine)
+    _migrate_qq_bindings(engine)

@@ -6,7 +6,6 @@ from typing import Optional
 
 from sqlalchemy import (
     Boolean,
-    Index,
     Column,
     DateTime,
     Enum,
@@ -16,7 +15,6 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -148,20 +146,8 @@ class QQOpenidBinding(Base):
     用于把官方通道收到的群/单聊消息解析回真实 QQ 号。
     """
     __tablename__ = "qq_openid_bindings"
-    # 按群记录：同一用户每个群一条绑定；群 openid 群唯一（c2c 按用户 openid 唯一）
     __table_args__ = (
-        Index(
-            "uq_qq_openid_group",
-            "group_openid",
-            unique=True,
-            sqlite_where=text("openid_type = 'group'"),
-        ),
-        Index(
-            "uq_qq_openid_c2c",
-            "openid",
-            unique=True,
-            sqlite_where=text("openid_type = 'c2c'"),
-        ),
+        UniqueConstraint("openid", name="uq_qq_openid_openid"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -317,43 +303,6 @@ class Fanwork(Base):
 
 # ------------------ AI 配置 / 会话 / 消息 ------------------
 
-class AIGroup(Base):
-    """AI 会话大组（顶层容器）：
-    - kind=qq：按 QQ 号归并 —— 该用户所有 openid（各群/私聊）的会话；
-    - kind=web：前端大组 —— 用户网页端会话（每用户一个，自动创建）。
-    """
-    __tablename__ = "ai_groups"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    kind = Column(String(10), nullable=False, default="web", server_default="web")  # qq | web
-    name = Column(String(100), nullable=False)
-    qq = Column(String(20), nullable=True, index=True)  # kind=qq 时记录 QQ 号
-    created_at = Column(DateTime, default=_now, nullable=False)
-    updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
-
-    owner = relationship("User", lazy="selectin")
-
-
-class AIFolder(Base):
-    """AI 会话分组（组）：
-    - QQ 大组下：按 openid 一组（群聊组名=群名、私聊组名=机器人名），openid 非空；
-    - 前端大组下：用户自定义分组，openid 为空。
-    会话可挂组下，也可直接挂大组下（未分组）。
-    """
-    __tablename__ = "ai_folders"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    group_id = Column(Integer, ForeignKey("ai_groups.id"), nullable=False, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    name = Column(String(100), nullable=False)
-    openid = Column(String(128), nullable=True, index=True)
-    created_at = Column(DateTime, default=_now, nullable=False)
-    updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
-
-    group = relationship("AIGroup", lazy="selectin")
-
-
 class AIConfig(Base):
     """AI 接口配置。
 
@@ -391,9 +340,6 @@ class AIConversation(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    ai_group_id = Column(Integer, ForeignKey("ai_groups.id"), nullable=True, index=True)
-    folder_id = Column(Integer, ForeignKey("ai_folders.id"), nullable=True, index=True)
-    is_default = Column(Boolean, nullable=False, default=False, server_default="0")
     source = Column(String(20), nullable=False, default="web", server_default="web")  # web | group
     title = Column(String(255), nullable=True)
     group_id = Column(String(30), nullable=True, index=True)
@@ -403,8 +349,6 @@ class AIConversation(Base):
     updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
 
     owner = relationship("User", lazy="selectin")
-    group = relationship("AIGroup", lazy="selectin")
-    folder = relationship("AIFolder", lazy="selectin")
     config = relationship("AIConfig", lazy="selectin")
     messages = relationship(
         "AIMessage",

@@ -443,9 +443,38 @@ USE_CONFIG_COMMAND = Command(
 )
 
 # 供 cli_router 收集；命名与其他模块统一为 COMMANDS
+CONV_COMMAND = Command(
+    ns_en="ai", ns_zh="问", sub_en="conv", sub_zh="会话",
+    summary="查看/切换 AI 会话（默认只列当前组的）",
+    brief="[列表|默认|新|<序号>|移 <序号>] [选项]",
+    usage="[动作] [选项]",
+    examples=(
+        "/ai 会话",
+        "/ai 会话 3",
+        "/ai 会话 默认",
+        "/ai 会话 新",
+        "/ai 会话 --scope web",
+        "/ai 会话 移 12 --scope web",
+    ),
+    options=(
+        Option(long="scope", short="s", value_name="<范围>", default="current",
+               help="查看/移动范围：current(当前组,默认) | all(QQ大组全部) | web(前端大组)"),
+    ),
+    handler="commands.ai:conv",
+    allow_positional=True,
+    require_registered=True,
+    notes=(
+        "不带动作默认列出当前 openid 组会话；<序号> 从列表编号，切换后继续该会话。",
+        "默认会话：提问时不指定就继续它；/ai 会话 默认 [<序号>] 查看/设置。",
+        "查看其它 openid 组或前端大组的会话请加 --scope all|web，可移动过来继续。",
+    ),
+)
+
+
 COMMANDS = (
     ASK_COMMAND,
     RESET_COMMAND,
+    CONV_COMMAND,
     MINE_CONFIGS_COMMAND,
     USE_CONFIG_COMMAND,
     CONFIG_COMMAND,
@@ -485,6 +514,218 @@ async def _group_title(bot: Bot, group_id: str) -> Optional[str]:
         return f"群聊 · {name}" if name else None
     except Exception:  # noqa: BLE001
         return None
+
+
+def _event_openid(event: Event) -> Optional[str]:
+    """AI 会话组定位键：官方群聊=群 openid（每群一组，组名=群名）；
+    官方私聊=c2c:user_openid；OneBot 返回 None（后端按群号兜底）。"""
+    g = getattr(event, "group_openid", None)
+    if g:
+        return str(g)
+    try:
+        uid = str(event.get_user_id() or "")
+    except Exception:  # noqa: BLE001
+        return None
+    if not uid or uid.isdigit():
+        return None
+    return f"c2c:{uid}"
+
+
+def _is_private(event: Event) -> bool:
+    """是否为私聊。QQ 官方：无 group_openid；OneBot：message_type=private。"""
+    if getattr(event, "message_type", None) == "private":
+        return True
+    if getattr(event, "group_openid", None):
+        return False
+    if getattr(event, "group_id", None):
+        return False
+    return True
+
+
+async def _bot_name(bot: Bot) -> Optional[str]:
+    """机器人显示名：优先适配器 API，失败用 QQ_BOT_NAME 配置。"""
+    for meth in ("get_self_info", "get_login_info"):
+        fn = getattr(bot, meth, None)
+        if fn is None:
+            continue
+        try:
+            info = await fn()
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            if isinstance(info, dict):
+                name = info.get("nickname") or info.get("nick") or info.get("bot_name")
+            else:
+                name = getattr(info, "nickname", None) or getattr(info, "bot_name", None)
+            if name:
+                return str(name).strip()[:50]
+        except Exception:  # noqa: BLE001
+            continue
+    return os.getenv("QQ_BOT_NAME") or None
+
+
+async def _folder_name(bot: Bot, event: Event) -> str:
+    """openid 组名：群聊=群名，私聊=机器人名。"""
+    if not _is_private(event):
+        gid = _event_group_id(event)
+        t = await _group_title(bot, gid)
+        if t and t.startswith("群聊 · "):
+            return t[len("群聊 · "):]
+        return f"群 {gid}"
+    name = await _bot_name(bot)
+    return name or "私聊"
+
+
+def _parse_index(text: str) -> Optional[int]:
+    if not text or not text.isdigit():
+        return None
+    n = int(text)
+    return n if n >= 1 else None
+
+
+async def conv(bot: Bot, event: Event, result: ParseResult) -> None:
+    """/ai 会话：列表 / 切换 / 默认 / 新建 / 移动。"""
+    qq = await resolve_sender_qq(event)
+    openid = _event_openid(event)
+    scope = result.get("scope") or "current"
+
+    async def _load(scope_: str) -> tuple:
+        data = await aisync.list_conversations(qq, openid=openid, scope=scope_)
+        return (data.get("items") or []), (data.get("current_id") or None)
+
+    try:
+        args = list(result.positional)
+        action = args[0] if args else "list"
+
+        if action in ("新", "new"):
+            group_id = _event_group_id(event)
+            group_title = await _group_title(bot, group_id)
+            folder_name = await _folder_name(bot, event)
+            info = await aisync.group_conversation(
+                qq, group_id, group_title,
+                openid=openid, folder_name=folder_name, force_new=True,
+            )
+            title = info.get("title") or "新会话"
+            await bot.send(event, f"🆕 已开启新会话「{title}」，后续提问自动使用。")
+            return
+
+        if action in ("默认", "default"):
+            items, _ = await _load("current")
+            if len(args) >= 2:
+                idx = _parse_index(args[1])
+                if idx is None or idx > len(items):
+                    raise CommandError("⚠️ 序号无效，请先 /ai 会话 查看编号。")
+                target = items[idx - 1]
+                await aisync.switch_conversation(qq, target["id"])
+                shown = target.get("title") or f"会话#{target['id']}"
+                await bot.send(event, f"⭐ 已将「{shown}」设为默认会话。")
+            else:
+                cur = next((i for i in items if i.get("is_default")), None)
+                if cur:
+                    shown = cur.get("title") or f"会话#{cur['id']}"
+                    msg = f"当前默认会话：{shown}"
+                else:
+                    msg = "当前默认会话：（无）"
+                await bot.send(event, msg + "\n设置：/ai 会话 默认 <序号>")
+            return
+
+        if action in ("移", "move"):
+            if len(args) < 2:
+                raise CommandError("⚠️ 用法：/ai 会话 移 <序号> [--scope all|web]")
+            items, _ = await _load(scope)
+            idx = _parse_index(args[1])
+            if idx is None or idx > len(items):
+                raise CommandError("⚠️ 序号无效，请先查看目标列表。")
+            target = items[idx - 1]
+            folder_name = await _folder_name(bot, event)
+            await aisync.move_conversation(
+                qq, target["id"], openid=openid, folder_name=folder_name
+            )
+            shown = target.get("title") or f"会话#{target['id']}"
+            await bot.send(
+                event,
+                f"✅ 已把「{shown}」移到当前组并设为默认，可继续对话。",
+            )
+            return
+
+        if action in ("删", "del", "delete"):
+            if len(args) < 2:
+                raise CommandError("⚠️ 用法：/ai 会话 删 <序号> [--scope all|web]")
+            items, _ = await _load(scope)
+            idx = _parse_index(args[1])
+            if idx is None or idx > len(items):
+                raise CommandError("⚠️ 序号无效，请先查看目标列表。")
+            target = items[idx - 1]
+            shown = target.get("title") or f"会话#{target['id']}"
+            await aisync.delete_conversation(qq, target["id"])
+            await bot.send(event, f"🗑️ 已删除会话「{shown}」。")
+            return
+
+        idx = _parse_index(action)
+        if idx is not None:
+            items, _ = await _load("current")
+            if not items or idx > len(items):
+                raise CommandError("⚠️ 当前组没有这个会话，先 /ai 会话 查看编号。")
+            target = items[idx - 1]
+            await aisync.switch_conversation(qq, target["id"])
+            shown = target.get("title") or f"会话#{target['id']}"
+            await bot.send(
+                event,
+                f"✅ 已切换到「{shown}」，后续提问继续此会话。",
+            )
+            return
+
+        items, current_id = await _load(scope)
+        scope_label = {"current": "当前组", "all": "QQ 大组全部", "web": "前端大组"}.get(scope, scope)
+        if not items:
+            await bot.send(
+                event,
+                f"📭 {scope_label}还没有会话。\n直接 /ai 提问会自动创建；也可 /ai 会话 新 开新会话。",
+            )
+            return
+        lines = [f"📋 {scope_label}的会话："]
+        for n, it in enumerate(items, 1):
+            star = "⭐" if it.get("is_default") else "  "
+            title = it.get("title") or f"会话#{it['id']}"
+            extra = ""
+            if scope != "current" and it.get("folder_name"):
+                extra = f"（{it['folder_name']}）"
+            last = (it.get("last_message") or "").strip()
+            if len(last) > 40:
+                last = last[:39] + "…"
+            suffix = f" — {last}" if last else ""
+            lines.append(f"{star}{n}. {title}{extra}{suffix}")
+        lines.append("")
+        if scope == "current":
+            lines.append("切换：/ai 会话 <序号>；默认：/ai 会话 默认 [<序号>]；新建：/ai 会话 新")
+            lines.append("其它范围：--scope all（QQ大组全部）/ --scope web（前端大组）")
+        else:
+            lines.append("继续：/ai 会话 移 <序号> --scope all|web（移到当前组）")
+        await bot.send(event, "\n".join(lines))
+    except CommandError as exc:
+        await bot.send(event, exc.message)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        try:
+            detail = exc.response.json().get("detail", "") or ""
+        except Exception:  # noqa: BLE001
+            detail = ""
+        if status == 404 and "绑定" in str(detail):
+            await bot.send(
+                event,
+                "⚠️ 你的 QQ 尚未绑定站点账号，无法使用 AI 会话。\n"
+                "请先在网页端注册（注册页会给你验证码，发给机器人完成绑定），"
+                "绑定后再来使用。",
+            )
+        elif status == 404:
+            await bot.send(
+                event, f"⚠️ 未找到目标：{detail or '请先 /ai 会话 查看编号。'}"
+            )
+        else:
+            await bot.send(event, f"⚠️ 操作失败（{status}）：{detail or '请稍后重试'}")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[ai 会话] 处理异常")
+        await bot.send(event, f"⚠️ 操作失败：{exc}")
 
 
 async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
@@ -534,13 +775,34 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
 
             group_id = _event_group_id(event)
             group_title = await _group_title(bot, group_id)
-            conv = await aisync.group_conversation(caller_qq, group_id, group_title)
+            openid = _event_openid(event)
+            folder_name = await _folder_name(bot, event)
+            conv = await aisync.group_conversation(
+                caller_qq, group_id, group_title,
+                openid=openid, folder_name=folder_name,
+            )
             conversation_id = conv.get("conversation_id")
             history = [
                 {"role": m["role"], "content": m["content"]}
                 for m in (conv.get("messages") or [])
             ]
             backend_ok = True
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            try:
+                detail = exc.response.json().get("detail", "") or ""
+            except Exception:  # noqa: BLE001
+                detail = ""
+            if status == 404 and "绑定" in str(detail):
+                await bot.send(
+                    event,
+                    "⚠️ 你的 QQ 尚未绑定站点账号，无法创建 AI 会话。\n"
+                    "请先在网页端注册（注册页会给你验证码，发给机器人完成绑定），"
+                    "绑定后再来提问。",
+                )
+                aitools.reset_current_user_qq(qq_token)
+                return
+            logger.warning(f"[ai] 后端配置/会话获取失败，降级 .env.prod 默认：{exc}")
         except Exception as exc:  # noqa: BLE001 后端离线 → 降级本地默认
             logger.warning(f"[ai] 后端配置/会话获取失败，降级 .env.prod 默认：{exc}")
 

@@ -131,16 +131,29 @@ def verify_register(
         row.nickname_in_group = payload.nickname_in_group
     row.last_synced_at = now
 
-    # 4. 绑定 QQ 官方 openid（openid ↔ 真实 QQ）
+    # 4. 绑定 QQ 官方 openid（按群记录：同群重绑更新、新群新增，互不覆盖）
     bound_openid = False
     openid = (payload.openid or "").strip()
     if openid:
         openid_type = payload.openid_type if payload.openid_type in ("group", "c2c") else "group"
-        binding = (
-            db.query(models.QQOpenidBinding)
-            .filter(models.QQOpenidBinding.openid == openid)
-            .first()
-        )
+        if openid_type == "group" and payload.group_openid:
+            binding = (
+                db.query(models.QQOpenidBinding)
+                .filter(
+                    models.QQOpenidBinding.openid_type == "group",
+                    models.QQOpenidBinding.group_openid == payload.group_openid,
+                )
+                .first()
+            )
+        else:
+            binding = (
+                db.query(models.QQOpenidBinding)
+                .filter(
+                    models.QQOpenidBinding.openid_type == "c2c",
+                    models.QQOpenidBinding.openid == openid,
+                )
+                .first()
+            )
         if binding is None:
             db.add(models.QQOpenidBinding(
                 qq=target_qq, openid=openid, openid_type=openid_type,
@@ -151,17 +164,17 @@ def verify_register(
             ))
         else:
             binding.qq = target_qq
-            binding.openid_type = openid_type
+            binding.openid = openid
             if openid_type == "group":
                 binding.group_id = group_id
-                # 群 openid / 群名称：新值优先，没有新值时保留旧值
-                if payload.group_openid:
-                    binding.group_openid = payload.group_openid
+                binding.group_openid = payload.group_openid
+                # 同群重绑：新群名优先，查不到则保留旧名（同群旧名仍正确）
+                if payload.group_name:
+                    binding.group_name = payload.group_name
             else:
                 binding.group_id = None
                 binding.group_openid = None
-            if payload.group_name:
-                binding.group_name = payload.group_name
+                binding.group_name = None
             binding.updated_at = now
         bound_openid = True
 

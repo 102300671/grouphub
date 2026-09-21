@@ -2,8 +2,11 @@ import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } fro
 import type {
   AIConfigListOut,
   AIConfigPayload,
+  AIConversationCreate,
   AIConversationDetailOut,
   AIConversationListOut,
+  AIConversationPatch,
+  AIGroupTreeListOut,
   AuthTokenOut,
   BindCodeOut,
   BindStatusOut,
@@ -208,11 +211,11 @@ export const aiClient = {
   listConversations() {
     return request<AIConversationListOut>({ url: "/ai/conversations", method: "GET" });
   },
-  createConversation() {
+  createConversation(data?: AIConversationCreate) {
     return request<AIConversationDetailOut>({
       url: "/ai/conversations",
       method: "POST",
-      data: {},
+      data: data || {},
     });
   },
   getConversation(id: number) {
@@ -233,6 +236,50 @@ export const aiClient = {
       url: `/ai/conversations/${id}/messages`,
       method: "POST",
       data: { role, content },
+    });
+  },
+  /* ---------- 会话层级（大组 / 组） ---------- */
+  listGroups() {
+    return request<AIGroupTreeListOut>({ url: "/ai/groups", method: "GET" });
+  },
+  renameGroup(id: number, name: string) {
+    return request<SimpleMessageOut>({
+      url: `/ai/groups/${id}`,
+      method: "PATCH",
+      data: { name },
+    });
+  },
+  createFolder(group_id: number, name: string) {
+    return request<SimpleMessageOut>({
+      url: "/ai/folders",
+      method: "POST",
+      data: { group_id, name },
+    });
+  },
+  renameFolder(id: number, name: string) {
+    return request<SimpleMessageOut>({
+      url: `/ai/folders/${id}`,
+      method: "PATCH",
+      data: { name },
+    });
+  },
+  deleteFolder(id: number) {
+    return request<SimpleMessageOut>({
+      url: `/ai/folders/${id}`,
+      method: "DELETE",
+    });
+  },
+  patchConversation(id: number, data: AIConversationPatch) {
+    return request<AIConversationDetailOut>({
+      url: `/ai/conversations/${id}`,
+      method: "PATCH",
+      data,
+    });
+  },
+  setDefaultConversation(id: number) {
+    return request<SimpleMessageOut>({
+      url: `/ai/conversations/${id}/default`,
+      method: "POST",
     });
   },
 };

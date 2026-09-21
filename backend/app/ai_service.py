@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+import httpx
 from sqlalchemy.orm import Session
 
 from . import models
@@ -107,6 +108,9 @@ def conversation_to_out(conv: models.AIConversation) -> dict:
         "title": conv.title,
         "source": conv.source,
         "group_id": conv.group_id,
+        "ai_group_id": conv.ai_group_id,
+        "folder_id": conv.folder_id,
+        "is_default": bool(conv.is_default),
         "config_id": conv.config_id,
         "archived": conv.archived_at is not None,
         "created_at": conv.created_at,
@@ -158,9 +162,285 @@ def touch(conv: models.AIConversation) -> None:
     conv.updated_at = utcnow()
 
 
+def try_ai_title(
+    db: Session,
+    conv: models.AIConversation,
+    question: str,
+    answer: str,
+    cfg_row: Optional[models.AIConfig] = None,
+) -> None:
+    """首轮对话完成后，用 AI 为会话生成简短标题并覆盖占位标题。
+
+    无有效远程配置（缺密钥等）或调用失败时静默保留现有标题（截首句兜底）。
+    """
+    if cfg_row is None:
+        _, cfg_row = get_effective_config(db, conv.owner)
+    if cfg_row is None or cfg_row.kind == "local":
+        return
+    base = (cfg_row.api_base or "").rstrip("/")
+    key = cfg_row.api_key or ""
+    model = cfg_row.model
+    if not base or not key or not model:
+        return
+    url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+    prompt = (
+        "根据这段对话为用户会话起一个简短标题，只输出标题本身，20 字以内，不要引号、不要解释：\n"
+        f"用户：{question[:200]}\n助手：{answer[:300]}"
+    )
+    try:
+        resp = httpx.post(
+            url,
+            headers={"Authorization": f"Bearer {key}"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 40,
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        title = resp.json()["choices"][0]["message"]["content"]
+        title = (title or "").strip().strip('"\u201c\u201d\u300c\u300d').replace("\n", " ")[:60]
+        if title:
+            conv.title = title
+    except Exception:
+        pass
+
+
 def recent_text_messages(
     conv: models.AIConversation, limit: int = 20
 ) -> List[dict]:
     """取最近若干条 user/assistant 消息（按时间正序返回）。"""
     msgs = conv.messages[-limit:] if limit else conv.messages
     return [{"role": m.role, "content": m.content} for m in msgs]
+
+
+# ------------------ 大组 / 分组（会话层级） ------------------
+
+
+def get_qq_group(db: Session, user: models.User) -> Optional[models.AIGroup]:
+    """该用户的 QQ 大组（按 QQ 号归并所有 openid 的会话）。"""
+    return (
+        db.query(models.AIGroup)
+        .filter(
+            models.AIGroup.owner_id == user.id,
+            models.AIGroup.kind == "qq",
+            models.AIGroup.qq == user.qq,
+        )
+        .first()
+    )
+
+
+def get_or_create_qq_group(db: Session, user: models.User) -> models.AIGroup:
+    g = get_qq_group(db, user)
+    if g is None:
+        g = models.AIGroup(
+            owner_id=user.id, kind="qq", qq=user.qq, name=f"QQ {user.qq}"
+        )
+        db.add(g)
+        db.flush()
+    return g
+
+
+def get_web_group(db: Session, user: models.User) -> Optional[models.AIGroup]:
+    """用户的前端大组（每用户一个，自动创建）。"""
+    return (
+        db.query(models.AIGroup)
+        .filter(models.AIGroup.owner_id == user.id, models.AIGroup.kind == "web")
+        .first()
+    )
+
+
+def get_or_create_web_group(db: Session, user: models.User) -> models.AIGroup:
+    g = get_web_group(db, user)
+    if g is None:
+        g = models.AIGroup(owner_id=user.id, kind="web", name="我的空间")
+        db.add(g)
+        db.flush()
+    return g
+
+
+def get_folder_by_openid(
+    db: Session, group: models.AIGroup, openid: str
+) -> Optional[models.AIFolder]:
+    return (
+        db.query(models.AIFolder)
+        .filter(
+            models.AIFolder.group_id == group.id,
+            models.AIFolder.openid == openid,
+        )
+        .first()
+    )
+
+
+def _binding_group_name(db: Session, openid: str) -> str:
+    """按组定位键查绑定群名：群聊键=群 openid；私聊键=c2c:xxx（无群名）；OneBot=gb:xxx（无群名）。"""
+    if not openid or openid.startswith(("c2c:", "gb:")):
+        return ""
+    b = (
+        db.query(models.QQOpenidBinding)
+        .filter(
+            models.QQOpenidBinding.openid_type == "group",
+            models.QQOpenidBinding.group_openid == openid,
+        )
+        .order_by(models.QQOpenidBinding.updated_at.desc())
+        .first()
+    )
+    return (b.group_name or "").strip() if b is not None else ""
+""
+
+
+def get_or_create_openid_folder(
+    db: Session, group: models.AIGroup, openid: str, name: Optional[str]
+) -> models.AIFolder:
+    """QQ 场景：openid 组。组名=群名/机器人名，随最新值更新。
+
+    优先用传入的群名/机器人名；官方通道取不到群名（回退“群 xxx”或空）时，
+    用绑定表记录的群名兜底，保证组名始终是真实群名。
+    """
+    bind_name = _binding_group_name(db, openid)
+    f = get_folder_by_openid(db, group, openid)
+    if f is None:
+        eff = (name or "").strip()[:50]
+        if bind_name and (not eff or eff.startswith("群 ")):
+            eff = bind_name
+        f = models.AIFolder(
+            group_id=group.id,
+            owner_id=group.owner_id,
+            name=eff or "会话",
+            openid=openid,
+        )
+        db.add(f)
+        db.flush()
+    else:
+        new_name = (name or "").strip()[:50]
+        if bind_name and (not new_name or new_name.startswith("群 ")):
+            new_name = bind_name
+        if new_name and f.name != new_name:
+            f.name = new_name
+    return f
+
+
+def get_owned_group(db: Session, user: models.User, group_id: int) -> Optional[models.AIGroup]:
+    return (
+        db.query(models.AIGroup)
+        .filter(models.AIGroup.id == group_id, models.AIGroup.owner_id == user.id)
+        .first()
+    )
+
+
+def get_owned_folder(db: Session, user: models.User, folder_id: int) -> Optional[models.AIFolder]:
+    return (
+        db.query(models.AIFolder)
+        .filter(models.AIFolder.id == folder_id, models.AIFolder.owner_id == user.id)
+        .first()
+    )
+
+
+def get_default_conversation(
+    db: Session, user: models.User, group: models.AIGroup, folder: Optional[models.AIFolder]
+) -> Optional[models.AIConversation]:
+    """组内默认（当前）会话：未归档且 is_default。"""
+    q = (
+        db.query(models.AIConversation)
+        .filter(
+            models.AIConversation.owner_id == user.id,
+            models.AIConversation.ai_group_id == group.id,
+            models.AIConversation.folder_id == (folder.id if folder else None),
+            models.AIConversation.is_default.is_(True),
+            models.AIConversation.archived_at.is_(None),
+        )
+        .first()
+    )
+    return q
+
+
+def get_or_create_default_conversation(
+    db: Session,
+    user: models.User,
+    group: models.AIGroup,
+    folder: Optional[models.AIFolder],
+    *,
+    title: Optional[str] = None,
+    source: Optional[str] = None,
+) -> models.AIConversation:
+    """取组内默认会话；没有则创建并设为默认。"""
+    conv = get_default_conversation(db, user, group, folder)
+    if conv is None:
+        conv = models.AIConversation(
+            owner_id=user.id,
+            ai_group_id=group.id,
+            folder_id=folder.id if folder else None,
+            source=source or ("group" if group.kind == "qq" else "web"),
+            title=(title or "").strip()[:255] or None,
+            is_default=True,
+        )
+        db.add(conv)
+        db.flush()
+    return conv
+
+
+def set_default_conversation(db: Session, user: models.User, conv: models.AIConversation) -> None:
+    """把 conv 设为所在组（大组+组维度）的默认会话，清掉同组其它默认标记。"""
+    db.query(models.AIConversation).filter(
+        models.AIConversation.owner_id == user.id,
+        models.AIConversation.ai_group_id == conv.ai_group_id,
+        models.AIConversation.folder_id == conv.folder_id,
+        models.AIConversation.is_default.is_(True),
+        models.AIConversation.id != conv.id,
+    ).update({"is_default": False}, synchronize_session=False)
+    conv.is_default = True
+
+
+def list_group_tree(db: Session, user: models.User) -> dict:
+    """大组树：groups[{id, kind, name, qq, folders:[{id,name,openid,conversations}], conversations(未分组)}]。"""
+    # 懒创建前端大组，保证网页端始终有会话空间
+    get_or_create_web_group(db, user)
+    db.flush()
+    groups = (
+        db.query(models.AIGroup)
+        .filter(models.AIGroup.owner_id == user.id)
+        .order_by(models.AIGroup.id)
+        .all()
+    )
+    convs = (
+        db.query(models.AIConversation)
+        .filter(models.AIConversation.owner_id == user.id)
+        .order_by(models.AIConversation.updated_at.desc())
+        .all()
+    )
+    out = []
+    for g in groups:
+        folders = (
+            db.query(models.AIFolder)
+            .filter(models.AIFolder.group_id == g.id)
+            .order_by(models.AIFolder.id)
+            .all()
+        )
+        g_convs = [c for c in convs if c.ai_group_id == g.id]
+        folder_items = []
+        for f in folders:
+            folder_items.append(
+                {
+                    "id": f.id,
+                    "name": f.name,
+                    "openid": f.openid,
+                    "conversations": [
+                        conversation_to_out(c) for c in g_convs if c.folder_id == f.id
+                    ],
+                }
+            )
+        out.append(
+            {
+                "id": g.id,
+                "kind": g.kind,
+                "name": g.name,
+                "qq": g.qq,
+                "folders": folder_items,
+                "conversations": [
+                    conversation_to_out(c) for c in g_convs if c.folder_id is None
+                ],
+            }
+        )
+    return {"ok": True, "groups": out}

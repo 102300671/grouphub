@@ -148,6 +148,87 @@ def _get_owned_config(
     return cfg
 
 
+# =================== 大组 / 组（会话层级） ===================
+
+@router.get("/groups", response_model=schemas.AIGroupTreeListOut)
+def group_tree(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """大组树：大组 -> 组 -> 会话（含未分组会话）。"""
+    return ai_service.list_group_tree(db, user)
+
+
+@router.patch("/groups/{group_id}", response_model=schemas.SimpleMessageOut)
+def rename_group(
+    group_id: int,
+    payload: schemas.AIGroupPatchIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    group = ai_service.get_owned_group(db, user, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="大组不存在")
+    group.name = payload.name.strip()[:100]
+    db.commit()
+    return schemas.SimpleMessageOut(message="ok")
+
+
+@router.post("/folders", response_model=schemas.SimpleMessageOut)
+def create_folder(
+    payload: schemas.AIFolderIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    group = ai_service.get_owned_group(db, user, payload.group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="大组不存在")
+    folder = models.AIFolder(
+        group_id=group.id,
+        owner_id=user.id,
+        name=payload.name.strip()[:100],
+    )
+    db.add(folder)
+    db.commit()
+    db.refresh(folder)
+    return schemas.SimpleMessageOut(
+        message="ok", details={"id": folder.id, "name": folder.name}
+    )
+
+
+@router.patch("/folders/{folder_id}", response_model=schemas.SimpleMessageOut)
+def rename_folder(
+    folder_id: int,
+    payload: schemas.AIFolderPatchIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    folder = ai_service.get_owned_folder(db, user, folder_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="组不存在")
+    folder.name = payload.name.strip()[:100]
+    db.commit()
+    return schemas.SimpleMessageOut(message="ok")
+
+
+@router.delete("/folders/{folder_id}", response_model=schemas.SimpleMessageOut)
+def delete_folder(
+    folder_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    folder = ai_service.get_owned_folder(db, user, folder_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="组不存在")
+    # 组内会话保留，取消分组（仍属于当前大组）
+    db.query(models.AIConversation).filter(
+        models.AIConversation.folder_id == folder.id
+    ).update({"folder_id": None}, synchronize_session=False)
+    db.delete(folder)
+    db.commit()
+    return schemas.SimpleMessageOut(message="已删除")
+
+
 # =================== 会话 ===================
 
 @router.get("/conversations", response_model=schemas.AIConversationListOut)
@@ -164,8 +245,20 @@ def create_conversation(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
+    group = ai_service.get_owned_group(db, user, payload.ai_group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="大组不存在")
+    folder = None
+    if payload.folder_id is not None:
+        folder = ai_service.get_owned_folder(db, user, payload.folder_id)
+        if folder is None or folder.group_id != group.id:
+            raise HTTPException(status_code=400, detail="组不存在或不属于该大组")
     conv = models.AIConversation(
-        owner_id=user.id, source="web", title=payload.title
+        owner_id=user.id,
+        ai_group_id=group.id,
+        folder_id=folder.id if folder else None,
+        source="web",
+        title=(payload.title or "").strip() or None,
     )
     db.add(conv)
     db.commit()
@@ -211,8 +304,6 @@ def delete_conversation(
     conv = ai_service.get_owned_conversation(db, user, conversation_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="会话不存在")
-    if conv.source == "group":
-        raise HTTPException(status_code=400, detail="群聊同步会话不可删除（可用群内 /ai 重置 归档）")
     db.delete(conv)
     db.commit()
     return schemas.SimpleMessageOut(message="已删除")
@@ -240,6 +331,74 @@ def append_message(
     return schemas.SimpleMessageOut(message="ok")
 
 
+@router.patch(
+    "/conversations/{conversation_id}", response_model=schemas.AIConversationDetailOut
+)
+def patch_conversation(
+    conversation_id: int,
+    payload: schemas.AIConversationPatchIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """会话编辑：改名 / 移动大组（清空原分组）/ 分组或取消分组。"""
+    conv = ai_service.get_owned_conversation(db, user, conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    data = payload.model_dump(exclude_unset=True)
+    if "title" in data:
+        conv.title = (data["title"] or "").strip()[:255] or None
+    if "ai_group_id" in data and data["ai_group_id"] is not None:
+        group = ai_service.get_owned_group(db, user, data["ai_group_id"])
+        if group is None:
+            raise HTTPException(status_code=404, detail="大组不存在")
+        conv.ai_group_id = group.id
+        conv.folder_id = None
+    if "folder_id" in data:
+        fid = data["folder_id"]
+        if fid is None:
+            conv.folder_id = None
+        else:
+            folder = ai_service.get_owned_folder(db, user, fid)
+            if folder is None or folder.group_id != conv.ai_group_id:
+                raise HTTPException(status_code=400, detail="组不存在或不属于会话所在大组")
+            conv.folder_id = fid
+    ai_service.touch(conv)
+    db.commit()
+    db.refresh(conv)
+    messages = [
+        {
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at,
+        }
+        for m in conv.messages
+    ]
+    return {
+        "ok": True,
+        "conversation": ai_service.conversation_to_out(conv),
+        "messages": messages,
+    }
+
+
+@router.post(
+    "/conversations/{conversation_id}/default",
+    response_model=schemas.SimpleMessageOut,
+)
+def set_default_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """把会话设为所在组的默认（当前）会话。"""
+    conv = ai_service.get_owned_conversation(db, user, conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    ai_service.set_default_conversation(db, user, conv)
+    db.commit()
+    return schemas.SimpleMessageOut(message="ok")
+
+
 # =================== 远程对话（SSE） ===================
 
 @router.post("/chat")
@@ -251,9 +410,7 @@ def chat(
     conv = ai_service.get_owned_conversation(db, user, payload.conversation_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="会话不存在")
-    if conv.source == "group":
-        raise HTTPException(status_code=400, detail="群聊会话请在群内与机器人对话")
-
+    # QQ 大组内的会话（群聊/私聊）允许在前端继续对话
     # 解析配置：显式指定 > 用户选中 > 内置默认
     if payload.config_id:
         cfg_row = _get_owned_config(db, user, payload.config_id)
@@ -300,7 +457,8 @@ def chat(
     request_messages.extend(history)
 
     return_stream = _sse_response(
-        url, key, model, request_messages, conv.id
+        url, key, model, request_messages, conv.id,
+        question=payload.content, cfg_row=cfg_row,
     )
     from fastapi.responses import StreamingResponse
 
@@ -313,6 +471,8 @@ async def _sse_response(
     model: str,
     request_messages: List[Dict[str, str]],
     conversation_id: int,
+    question: Optional[str] = None,
+    cfg_row: Optional[models.AIConfig] = None,
 ) -> AsyncGenerator[bytes, None]:
     """转发上游 SSE，转成前端统一事件格式，并在结束后落库 assistant 消息。"""
 
@@ -363,6 +523,12 @@ async def _sse_response(
                     conversation_id=conv.id, role="assistant", content=collected
                 )
             )
+            if question:
+                import asyncio
+
+                await asyncio.to_thread(
+                    ai_service.try_ai_title, db, conv, question, collected, cfg_row
+                )
             ai_service.touch(conv)
             db.commit()
     yield sse({"type": "done"})

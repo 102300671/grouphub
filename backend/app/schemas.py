@@ -355,7 +355,17 @@ class AIConfigListOut(BaseModel):
 
 
 class AIConversationIn(BaseModel):
+    """新建会话：必须属于某大组；folder_id 可空（未分组）。"""
+    ai_group_id: int = Field(..., description="所属大组 id")
+    folder_id: Optional[int] = Field(None, description="所属组 id（可空=未分组）")
     title: Optional[str] = Field(None, max_length=255)
+
+
+class AIConversationPatchIn(BaseModel):
+    """会话编辑：改名 / 移动大组 / 分组（folder_id 传 null=取消分组）。"""
+    title: Optional[str] = Field(None, max_length=255)
+    ai_group_id: Optional[int] = None
+    folder_id: Optional[int] = None  # 显式 null 表示取消分组（移到大组下）
 
 
 class AIMessageOut(BaseModel):
@@ -370,6 +380,9 @@ class AIConversationOut(BaseModel):
     title: Optional[str] = None
     source: str
     group_id: Optional[str] = None
+    ai_group_id: Optional[int] = None
+    folder_id: Optional[int] = None
+    is_default: bool = False
     config_id: Optional[int] = None
     archived: bool = False
     created_at: datetime
@@ -386,6 +399,48 @@ class AIConversationDetailOut(BaseModel):
     ok: bool
     conversation: AIConversationOut
     messages: List[AIMessageOut]
+
+
+class AIGroupPatchIn(BaseModel):
+    """大组改名。"""
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class AIFolderIn(BaseModel):
+    """新建组（分组）。"""
+    group_id: int = Field(..., description="所属大组 id")
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class AIFolderPatchIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class AIConversationOutPatch(BaseModel):
+    """会话补丁（移动大组 / 分组 / 取消分组）。"""
+    title: Optional[str] = Field(None, max_length=255)
+    ai_group_id: Optional[int] = None
+    folder_id: Optional[int] = None
+
+
+class AIGroupTreeOut(BaseModel):
+    """大组树节点。"""
+    id: int
+    kind: str
+    name: str
+    qq: Optional[str] = None
+    folders: List[dict] = []
+    conversations: List[AIConversationOut] = []
+
+
+class AIGroupTreeListOut(BaseModel):
+    ok: bool
+    groups: List[AIGroupTreeOut]
+
+
+class SimpleIdOut(BaseModel):
+    ok: bool
+    id: int
 
 
 class AIMessageIn(BaseModel):
@@ -429,9 +484,34 @@ class AIActivateIn(BaseModel):
 
 
 class AIBotConversationIn(BaseModel):
+    """机器人取/建会话：按 openid 定位组（群名/机器人名）。"""
     qq: str = Field(..., min_length=1)
     group_id: str = Field(..., min_length=1)
+    openid: Optional[str] = Field(None, max_length=128)
+    folder_name: Optional[str] = Field(None, max_length=100, description="组名：群名或机器人名")
     title: Optional[str] = Field(None, max_length=255)
+    force_new: bool = Field(False, description="True=归档当前默认会话并新建")
+
+
+class AIBotConversationQuery(BaseModel):
+    """机器人列会话：scope=current|all|web。"""
+    qq: str = Field(..., min_length=1)
+    openid: Optional[str] = Field(None, max_length=128)  # current 范围用
+    scope: str = Field("current", pattern="^(current|all|web)$")
+
+
+class AIBotSwitchIn(BaseModel):
+    """切换当前会话（设为组内默认）。"""
+    qq: str = Field(..., min_length=1)
+    conversation_id: int = Field(..., gt=0)
+
+
+class AIBotMoveIn(BaseModel):
+    """把其它范围（其它 openid 组 / 前端大组）的会话移到当前 openid 组。"""
+    qq: str = Field(..., min_length=1)
+    openid: Optional[str] = Field(None, max_length=128)  # 目标组 openid；缺省按当前定位
+    folder_name: Optional[str] = Field(None, max_length=100)  # 目标组不存在时用此名创建
+    conversation_id: int = Field(..., gt=0)
 
 
 class AIBotMessagesIn(BaseModel):

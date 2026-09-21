@@ -259,13 +259,18 @@ async def get_group_name_by_openid(bot: Bot, group_openid: str) -> Optional[str]
 
     # 直调 openapi
     if not name:
-        try:
-            data = await qq_openapi_request(
-                bot, "GET", f"/v2/groups/{group_openid}/info"
-            )
-            name = (data or {}).get("group_name") or None
-        except Exception as exc:  # noqa: BLE001
-            logger.debug(f"[bots] 官方通道查群名称失败：openid={group_openid} err={exc}")
+        # 直调失败后重试一次（瞬时错误常见：token 刷新 / 网络抖动）
+        for _ in range(2):
+            try:
+                data = await qq_openapi_request(
+                    bot, "GET", f"/v2/groups/{group_openid}/info"
+                )
+                name = (data or {}).get("group_name") or None
+                if name:
+                    break
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"[bots] 官方通道查群名称失败：openid={group_openid} err={exc}")
+                name = None
 
     name = str(name) if name else None
     _group_name_cache[group_openid] = (now, name)
