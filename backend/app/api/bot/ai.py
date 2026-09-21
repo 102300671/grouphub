@@ -183,6 +183,7 @@ def list_conversations(
     current_id: Optional[int] = None
     if scope == "web":
         group = ai_service.get_or_create_web_group(db, user)
+        db.commit()
         folders = {
             f.id: f.name
             for f in (

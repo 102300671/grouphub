@@ -461,9 +461,9 @@ def set_default_conversation(db: Session, user: models.User, conv: models.AIConv
 
 def list_group_tree(db: Session, user: models.User) -> dict:
     """大组树：groups[{id, kind, name, qq, folders:[{id,name,openid,conversations}], conversations(未分组)}]。"""
-    # 懒创建前端大组，保证网页端始终有会话空间
+    # 懒创建前端大组，保证网页端始终有会话空间（GET 内写库必须 commit，否则被会话关闭回滚）
     get_or_create_web_group(db, user)
-    db.flush()
+    db.commit()
     groups = (
         db.query(models.AIGroup)
         .filter(models.AIGroup.owner_id == user.id)
