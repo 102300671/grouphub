@@ -277,8 +277,23 @@ def try_ai_title(
 def recent_text_messages(
     conv: models.AIConversation, limit: int = 20
 ) -> List[dict]:
-    """取最近若干条 user/assistant 消息（按时间正序返回）。"""
-    msgs = conv.messages[-limit:] if limit else conv.messages
+    """取最近若干条 user/assistant 消息（按时间正序返回）。
+
+    直接查库而不用 conv.messages 关系：messages 为 selectin 预加载，配合
+    Session(expire_on_commit=False) 时，同一会话内刚插入的消息不会出现在
+    已加载的集合缓存中（标量 FK 插入不会回填集合），会导致请求漏带最新消息。
+    """
+    from sqlalchemy.orm import object_session
+
+    db = object_session(conv)
+    query = (
+        db.query(models.AIMessage)
+        .filter(models.AIMessage.conversation_id == conv.id)
+        .order_by(models.AIMessage.id)
+    )
+    msgs = query.all()
+    if limit:
+        msgs = msgs[-limit:]
     return [{"role": m.role, "content": m.content} for m in msgs]
 
 

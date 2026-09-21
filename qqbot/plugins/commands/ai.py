@@ -209,39 +209,67 @@ async def _chat(
 
     url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
     headers = {"Authorization": f"Bearer {key}"} if key else {}
+    client = _http()
+    # 先带 enable_thinking（思考走独立 reasoning_content 通道，本函数不转发它，
+    # QQ 只收到干净正文；且该模式下工具调用标签更规范）。
+    # 上游不认识该参数（400/422）时自动去参重试，兼容严格 OpenAI 端点。
+    payloads = [
+        {"model": model, "messages": messages, "stream": True, "enable_thinking": True},
+        {"model": model, "messages": messages, "stream": True},
+    ]
+    resp = None
+    last_err_body = ""
+    for idx, payload in enumerate(payloads):
+        candidate = await client.send(
+            client.build_request("POST", url, json=payload, headers=headers),
+            stream=True,
+        )
+        if idx == 0 and candidate.status_code in (400, 422):
+            last_err_body = (await candidate.aread()).decode("utf-8", "ignore")[:200]
+            await candidate.aclose()
+            logger.info(f"[ai] 上游不支持 enable_thinking，降级普通请求：{last_err_body}")
+            continue
+        resp = candidate
+        break
+    assert resp is not None
+
     collected = ""
+    flushed = 0  # 已通过 on_delta 推送的长度；<tool_call> 块原文不推送（QQ 不闪 XML）
     try:
-        async with _http().stream(
-            "POST",
-            url,
-            json={"model": model, "messages": messages, "stream": True},
-            headers=headers,
-        ) as resp:
-            if resp.status_code != 200:
-                text = (await resp.aread()).decode("utf-8", "ignore")[:300]
-                logger.error(f"[ai] 接口返回 {resp.status_code}：{text}")
-                raise CommandError(f"⚠️ AI 接口返回 {resp.status_code}：{text}")
-            async for line in resp.aiter_lines():
-                if not line or not line.startswith("data:"):
+        if resp.status_code != 200:
+            text = (await resp.aread()).decode("utf-8", "ignore")[:300]
+            logger.error(f"[ai] 接口返回 {resp.status_code}：{text}")
+            raise CommandError(f"⚠️ AI 接口返回 {resp.status_code}：{text}")
+        async for line in resp.aiter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+                delta = chunk["choices"][0].get("delta", {})
+                # reasoning_content 为模型思考链，QQ 不展示
+                piece = delta.get("content") or ""
+            except (ValueError, KeyError, IndexError):
+                continue
+            if piece:
+                collected += piece
+                if on_delta is None:
                     continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                    piece = chunk["choices"][0]["delta"].get("content") or ""
-                except (ValueError, KeyError, IndexError):
-                    continue
-                if piece:
-                    collected += piece
-                    if on_delta is not None:
-                        try:
-                            await on_delta(piece)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.debug(f"[ai] on_delta 回调异常（不影响主流程）：{exc}")
+                open_idx = collected.lower().find("<tool_call")
+                safe_end = open_idx if open_idx >= 0 else len(collected)
+                if safe_end > flushed:
+                    try:
+                        await on_delta(collected[flushed:safe_end])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(f"[ai] on_delta 回调异常（不影响主流程）：{exc}")
+                    flushed = safe_end
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         logger.error(f"[ai] 请求失败：{url} -> {exc!r}")
         raise CommandError(f"⚠️ AI 接口连接失败（{url}）：{exc}") from exc
+    finally:
+        await resp.aclose()
 
     if not collected.strip():
         raise CommandError("⚠️ AI 返回了空内容。")
@@ -382,6 +410,15 @@ class _C2CStreamer:
         self.index = 0
         self._last_send = 0.0
         self._closed = False
+
+    def reset(self) -> None:
+        """清空累计文本：工具轮结束、最终回答开始前调用。
+
+        下一次 send 的 replace 帧会用最终答案整体覆盖中间轮内容，
+        stream_msg_id / index 沿用同一条流式消息，无需重开。
+        """
+        self.accumulated = ""
+        self._last_send = 0.0
 
     async def send(self, piece: str) -> None:
         """追加一段增量文本，节流发送（~5 帧/秒）。"""
@@ -962,6 +999,9 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         streamer = _C2CStreamer(bot, event, c2c_uid, msg_id=getattr(event, "id", None) or None)
 
     async def _on_agent_event(kind: str, payload: Dict[str, object]) -> None:
+        # 单聊流式：工具轮之后的最终回答要整体覆盖中间内容，重置累计文本
+        if streamer is not None and kind == "before_chat" and int(payload.get("step") or 0) >= 1:
+            streamer.reset()
         # 群聊精简：不发送「思考中」类占位；只保留工具调用过程的可见回复
         if kind == "tool_call" and payload.get("name") == "web:search":
             await bot.send(event, f"🔍 联网搜索：{payload.get('args', {}).get('query', '')}")

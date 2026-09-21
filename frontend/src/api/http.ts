@@ -362,11 +362,26 @@ export async function streamLocalChat(
     : `${base}/chat/completions`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (endpoint.api_key) headers.Authorization = `Bearer ${endpoint.api_key}`;
-  const resp = await fetch(url, {
+  // 先带 enable_thinking（Qwen3 等：思考走 reasoning_content 独立通道）；
+  // 本地端点不认识该参数（400/422）时去参重试一次。
+  const buildBody = (withThinking: boolean) =>
+    JSON.stringify(
+      withThinking
+        ? { model: endpoint.model, messages, stream: true, enable_thinking: true }
+        : { model: endpoint.model, messages, stream: true },
+    );
+  let resp = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ model: endpoint.model, messages, stream: true }),
+    body: buildBody(true),
   });
+  if (resp.status === 400 || resp.status === 422) {
+    resp = await fetch(url, {
+      method: "POST",
+      headers,
+      body: buildBody(false),
+    });
+  }
   if (!resp.ok || !resp.body) {
     const text = await resp.text().catch(() => "");
     throw new Error(text || `本地端点返回 HTTP ${resp.status}（请确认服务已启动且允许跨域）`);

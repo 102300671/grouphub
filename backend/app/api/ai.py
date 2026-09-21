@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import AsyncGenerator, Dict, List, Optional
 
@@ -20,6 +21,7 @@ from app.models import utcnow
 from app.security import get_current_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # 网页端携带的最近消息条数；上游请求超时
 _HISTORY_LIMIT = 20
@@ -27,49 +29,154 @@ _TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 _MAX_TOOL_STEPS = 3
 
 # 文本协议工具（与 qqbot aitools 一致的轻量子集：仅联网搜索）
-_TOOL_BLOCK_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
+# 实测 agnes-3.0-flash 等模型会发生标签漂移：</tool_call> 误写成 </think>、
+# 工具名被包进尖括号、混入其它 XML 闭合标签等。解析器对此统一容错。
+
+_TOOL_OPEN_RE = re.compile(r"<tool_call\b[^>]*>", re.IGNORECASE)
+_TOOL_CLOSE_RE = re.compile(
+    r"<\s*/\s*(?:tool_call|function_call|function_calls|function|invoke|tool|think)\s*>",
+    re.IGNORECASE,
+)
+# 闭合标签字面量在源码里拼接，避免与文档工具链冲突
+_CLOSE_PARAMETER = "<" + "/parameter>"
+_PURGE_TAG_RE = re.compile(
+    r"<\s*/?\s*(?:parameter(?:\s*=\s*\w+)?|function|invoke|think|tool_call)[^>]*>",
+    re.IGNORECASE,
+)
 _TOOL_RESULT_RE = re.compile(r"<tool_result\b.*?</tool_result>", re.DOTALL | re.IGNORECASE)
+_NAME_RE = re.compile(r"([A-Za-z_]\w*\s*:\s*[A-Za-z_]\w*)")
+_FUNCTION_TAG_RE = re.compile(r"<\s*function\s*[=\s]\s*([^>]+?)\s*>", re.IGNORECASE)
+_PARAM_KV_RE = re.compile(r"^<\s*parameter\s*=\s*(\w+)\s*>\s*(.*)$", re.IGNORECASE)
+_TRAILING_CLOSE_RE = re.compile(r"\s*<\s*/\s*[a-z_]+\s*>\s*$", re.IGNORECASE)
+_BARE_CLOSING_RE = re.compile(r"^<\s*/\s*[a-z_]+\s*>$", re.IGNORECASE)
+_BARE_OPENING_RE = re.compile(r"^<\s*[a-z_]+\s*>$", re.IGNORECASE)
 
 _TOOL_CATALOG = (
     "你有联网搜索工具可用。当问题涉及最新资讯、实时数据、近期版本/数值、攻略资料"
-    "或你不确定的事实，且你已有的知识不足以可靠回答时，按如下协议调用搜索：\n\n"
+    "或你不确定的事实，且你已有的知识不足以可靠回答时，严格按如下协议调用搜索，"
+    "一次只输出一个块，块外不要写解释，不要用代码围栏，也不要输出本协议以外的任何 XML 标签：\n\n"
     "<tool_call>\nweb:search\nquery=搜索关键词\n</tool_call>\n\n"
-    "（query 必填，精炼，不要包含客套话。）系统返回 <tool_result> 后，参考其中带 [序号]"
-    "的资料回答并标注引用；若搜索无结果或资料不足，如实说明，不要编造。"
+    "要求：开标签必须是 <tool_call>，闭标签必须是 </tool_call>，二者都不能写错或省略；"
+    "第二行固定为 web:search；query 必填，精炼，不要包含客套话。"
+    "系统返回 <tool_result> 后，参考其中带 [序号] 的资料回答并标注引用；"
+    "若搜索无结果或资料不足，如实说明，不要编造。"
 )
 
 
-def _parse_tool_calls(text: str) -> List[Dict[str, object]]:
-    """解析 <tool_call> 块：首行 命名空间:工具名，后续 key=value 或整体 JSON。"""
-    calls: List[Dict[str, object]] = []
-    for match in _TOOL_BLOCK_RE.finditer(text or ""):
-        body = match.group(1).strip()
-        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-        if not lines:
+def _iter_tool_blocks(text: str):
+    """遍历所有工具块 (start, end, body)；容忍错误闭合标签与未闭合块。"""
+    for m in _TOOL_OPEN_RE.finditer(text or ""):
+        tail = text[m.end():]
+        close = _TOOL_CLOSE_RE.search(tail)
+        next_open = _TOOL_OPEN_RE.search(tail)
+        if next_open and (not close or next_open.start() < close.start()):
+            end = m.end() + next_open.start()
+            body = tail[: next_open.start()]
+        elif close:
+            end = m.end() + close.end()
+            body = tail[: close.start()]
+        else:
+            end = len(text)
+            body = tail
+        yield m.start(), end, body
+
+
+def _parse_tool_body(body: str) -> Dict[str, object]:
+    """解析块体：兼容标准 key=value、整体 JSON 与模型漂移出的杂标签。"""
+    text = body.strip()
+    name: Optional[str] = None
+    name_from_tag = False
+    fm = _FUNCTION_TAG_RE.search(text)
+    if fm:
+        nm = _NAME_RE.search(fm.group(1))
+        if nm:
+            name = nm.group(1).replace(" ", "")
+            name_from_tag = True
+            text = (text[: fm.start()] + "\n" + text[fm.end():])
+
+    lines: List[str] = []
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln:
             continue
-        name = lines[0].strip()
-        args: Dict[str, str] = {}
-        tail = lines[1:]
-        if tail and tail[0][:1] in "{[":
-            try:
-                parsed = json.loads("\n".join(tail))
-                if isinstance(parsed, dict):
-                    args = {str(k): ("" if v is None else str(v)) for k, v in parsed.items()}
-                    tail = []
-            except json.JSONDecodeError:
-                pass
-        for line in tail:
-            if "=" in line:
-                key, value = line.split("=", 1)
-                args[key.strip()] = value.strip()
-        calls.append({"name": name, "args": args, "raw": match.group(0)})
+        if _BARE_CLOSING_RE.match(ln) or _BARE_OPENING_RE.match(ln):
+            continue
+        lines.append(ln)
+
+    if name is None:
+        first = (lines[0] if lines else "").lstrip("<").rstrip(">").strip()
+        nm = _NAME_RE.search(first)
+        name = nm.group(1).replace(" ", "") if nm else first
+        if lines:
+            lines[0] = first
+
+    args: Dict[str, str] = {}
+    tail = lines if name_from_tag else lines[1:]
+    joined = "\n".join(tail).strip()
+    if joined[:1] in "{[":
+        try:
+            parsed = json.loads(joined)
+            if isinstance(parsed, dict):
+                args = {str(k): ("" if v is None else str(v)) for k, v in parsed.items()}
+                tail = []
+        except json.JSONDecodeError:
+            pass
+    for line in tail:
+        ln = line.replace(_CLOSE_PARAMETER, "").strip()
+        pm = _PARAM_KV_RE.match(ln)
+        if pm:
+            key, value = pm.group(1), pm.group(2)
+        elif "=" in ln:
+            key, value = ln.split("=", 1)
+        else:
+            continue
+        value = _TRAILING_CLOSE_RE.sub("", value).rstrip(">").strip()
+        args[key.strip().strip("<>")] = value
+    return {"name": name or "", "args": args}
+
+
+_FUNCTION_CLOSE_RE = re.compile(
+    r"<\s*/\s*function\s*>", re.IGNORECASE
+)
+
+
+def _iter_function_blocks(text: str):
+    """无 tool_call 外壳时的回退：识别 function 标签块（开标签到配对闭标签或文末）。"""
+    for m in _FUNCTION_TAG_RE.finditer(text or ""):
+        tail = text[m.end():]
+        cm = _FUNCTION_CLOSE_RE.search(tail)
+        if cm:
+            yield m.start(), m.end() + cm.end(), text[m.start(): m.end() + cm.end()]
+        else:
+            yield m.start(), len(text), text[m.start():]
+
+
+def _parse_tool_calls(text: str) -> List[Dict[str, object]]:
+    """解析全部工具块（容忍标签漂移），返回 name/args/raw/span。"""
+    calls: List[Dict[str, object]] = []
+    blocks = list(_iter_tool_blocks(text or ""))
+    if not blocks:
+        blocks = list(_iter_function_blocks(text or ""))
+    for start, end, raw_block in blocks:
+        body = raw_block
+        parsed = _parse_tool_body(body)
+        if not parsed["name"]:
+            continue
+        parsed["raw"] = text[start:end]
+        parsed["span"] = (start, end)
+        calls.append(parsed)
     return calls
 
 
 def _strip_tool_calls(text: str) -> str:
-    """剥离工具块与残留 result 块，压缩空行。"""
-    out = _TOOL_BLOCK_RE.sub("", text or "")
+    """剥离工具块、残留 result 块与杂标签，压缩空行。"""
+    out = text or ""
+    spans = [(s, e) for s, e, _ in _iter_tool_blocks(out)]
+    spans += [(s, e) for s, e, _ in _iter_function_blocks(out)]
+    for start, end in sorted(spans, reverse=True):
+        out = out[:start] + out[end:]
     out = _TOOL_RESULT_RE.sub("", out)
+    out = _PURGE_TAG_RE.sub("", out)
     out = re.sub(r"[ \t]+\n", "\n", out)
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
@@ -551,7 +658,47 @@ def chat(
     )
     from fastapi.responses import StreamingResponse
 
-    return StreamingResponse(return_stream, media_type="text/event-stream")
+    return StreamingResponse(
+        return_stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 防 nginx/反代缓冲 SSE
+        },
+    )
+
+
+async def _open_chat_stream(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: Dict[str, str],
+    model: str,
+    messages: List[Dict[str, str]],
+) -> httpx.Response:
+    """开启上游流式响应。
+
+    首选带 enable_thinking（Qwen3/部分中转支持，模型会在 reasoning_content
+    独立通道输出思考，且工具调用标签更规范）；上游因不认识该参数返回 400/422
+    时自动去掉该参数重试一次，兼容严格遵循 OpenAI 协议的端点。
+    """
+    thinking_payload = {
+        "model": model, "messages": messages, "stream": True, "enable_thinking": True
+    }
+    resp = await client.send(
+        client.build_request("POST", url, json=thinking_payload, headers=headers),
+        stream=True,
+    )
+    if resp.status_code in (400, 422):
+        body = (await resp.aread()).decode("utf-8", "ignore")[:200]
+        await resp.aclose()
+        logger.info("上游不支持 enable_thinking（%s），降级普通请求：%s", resp.status_code, body)
+        plain_payload = {"model": model, "messages": messages, "stream": True}
+        resp = await client.send(
+            client.build_request("POST", url, json=plain_payload, headers=headers),
+            stream=True,
+        )
+    return resp
 
 
 async def _sse_response(
@@ -597,14 +744,11 @@ async def _sse_response(
     used_tool = False
     for _step in range(_MAX_TOOL_STEPS):
         collected = ""
+        flushed = 0  # 已推给前端的正文长度；工具块原文不推送（避免 XML 闪烁）
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                async with client.stream(
-                    "POST",
-                    url,
-                    json={"model": model, "messages": messages, "stream": True},
-                    headers=headers,
-                ) as resp:
+                resp = await _open_chat_stream(client, url, headers, model, messages)
+                try:
                     if resp.status_code != 200:
                         text = (await resp.aread()).decode("utf-8", "ignore")[:300]
                         yield sse({"type": "error", "message": f"上游返回 {resp.status_code}：{text}"})
@@ -624,19 +768,31 @@ async def _sse_response(
                         if r_piece:
                             yield sse({"type": "reasoning", "text": r_piece})
                         piece = delta.get("content") or ""
-                        if piece:
-                            collected += piece
-                            yield sse({"type": "delta", "text": piece})
+                        if not piece:
+                            continue
+                        collected += piece
+                        # 出现工具块开标签后，其后的正文先暂存：确认为工具调用则丢弃，
+                        # 否则（模型只是在讨论协议文本）结束时补发，避免漏字。
+                        open_m = _TOOL_OPEN_RE.search(collected)
+                        safe_end = open_m.start() if open_m else len(collected)
+                        if safe_end > flushed:
+                            yield sse({"type": "delta", "text": collected[flushed:safe_end]})
+                            flushed = safe_end
+                finally:
+                    await resp.aclose()
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             yield sse({"type": "error", "message": f"连接上游失败：{exc}"})
             return
 
         calls = _parse_tool_calls(collected)
         if not calls:
+            if len(collected) > flushed:
+                yield sse({"type": "delta", "text": collected[flushed:]})
             collected_final = _strip_tool_calls(collected) or collected.strip()
             break
 
         used_tool = True
+        messages.append({"role": "assistant", "content": collected})
         for call in calls:
             name = str(call.get("name") or "")
             args = call.get("args") or {}
@@ -647,7 +803,6 @@ async def _sse_response(
                 result = f"错误：工具 {name} 不可用或未配置搜索地址。"
             summary = result.replace("\n", " ").strip()[:120]
             yield sse({"type": "tool_result", "name": name, "summary": summary})
-            messages.append({"role": "assistant", "content": collected})
             messages.append(
                 {"role": "user", "content": f'<tool_result name="{name}">\n{result}\n</tool_result>'}
             )
