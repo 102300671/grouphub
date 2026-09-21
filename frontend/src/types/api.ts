@@ -5,6 +5,7 @@ export interface AuthUser {
   qq: string;
   nickname: string;
   role: UserRole;
+  is_active: boolean;
   avatar_url?: string | null;
   created_at?: string;
 }
@@ -83,12 +84,14 @@ export interface SimpleMessageOut {
 
 export type WorkType = "novel" | "anime" | "movie" | "gallery" | "fanwork" | "other" | string;
 export type ReadingStatus = "reading" | "completed" | "plan" | "pause" | "drop" | string;
+export type WorkStatus = "published" | "pending" | "draft" | string;
 
 export interface Work {
   id: number;
   title: string;
   author?: string | null;
   type: WorkType;
+  status?: WorkStatus;
   summary?: string | null;
   uploader?: { id: number; nickname: string; qq: string } | null;
   tags: string[];
@@ -243,15 +246,41 @@ export interface FanworkDetailResponse {
 export interface AdminSummary {
   counts: {
     users: number;
+    users_disabled: number;
     works: number;
+    works_pending: number;
     reviews: number;
     topics: number;
     fanworks: number;
     group_members_active: number;
   };
   show_relation_threshold: number;
+  works_require_review: boolean;
   admin_count_in_env: number;
   current_admin_qqs: string[];
+}
+
+/** 管理后台用户列表项 */
+export interface AdminUser {
+  id: number;
+  qq: string;
+  nickname: string | null;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** 管理后台运行时设置（持久化于 admin_settings 表） */
+export interface AdminSettings {
+  show_relation_threshold: number;
+  works_require_review: boolean;
+}
+
+export interface AdminWorkListResponse {
+  items: Work[];
+  total: number;
+  pending_total: number;
+  works_require_review: boolean;
 }
 
 // =============== AI 助手 ===============

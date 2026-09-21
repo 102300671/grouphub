@@ -170,6 +170,7 @@ async function loadUserWorks() {
         id: w.id as number,
         title: w.title as string,
         type: w.type as Work["type"],
+        status: (w.status as Work["status"]) || "published",
         cover_url: (w.cover_url as string) || null,
         author: (w.author as string) || null,
         tags: [],
@@ -177,8 +178,9 @@ async function loadUserWorks() {
         updated_at: (w.updated_at as string) || undefined,
       });
       uploadedWorks.value = res.uploaded.map(mapWork);
-      supportedWorks.value = res.supported.map(mapWork);
-      recommendedWorks.value = res.recommended.map(mapWork);
+      // 待审核/草稿作品只属于上传者，不应出现在「我支持/我推荐」的公开关系列表里
+      supportedWorks.value = res.supported.map(mapWork).filter((w) => w.status === "published");
+      recommendedWorks.value = res.recommended.map(mapWork).filter((w) => w.status === "published");
     }
   } catch (e) {
     errorMsg.value = extractErrMsg(e, "获取个人资料失败");
@@ -312,6 +314,8 @@ onBeforeUnmount(stopBindPoll);
                 <div class="work-title">{{ w.title }}</div>
                 <div class="work-meta">
                   <span class="badge badge-muted">{{ w.type }}</span>
+                  <span v-if="w.status === 'pending'" class="badge badge-pending">待审核</span>
+                  <span v-else-if="w.status === 'draft'" class="badge badge-draft">草稿</span>
                   <span v-if="w.author" class="muted text-sm">作者：{{ w.author }}</span>
                   <span v-if="w.updated_at" class="muted text-sm">{{ w.updated_at.slice(0, 10) }}</span>
                 </div>
@@ -319,7 +323,7 @@ onBeforeUnmount(stopBindPoll);
             </RouterLink>
           </div>
         </div>
-        
+
         <!-- 支持的作品 -->
         <div v-if="supportedWorks.length > 0" class="mb-8">
           <h4>❤️ 我支持的作品</h4>
@@ -515,6 +519,14 @@ onBeforeUnmount(stopBindPoll);
   gap: 6px;
   align-items: center;
   font-size: 12px;
+}
+.badge-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+.badge-draft {
+  background: #e5e7eb;
+  color: #374151;
 }
 
 h4 {

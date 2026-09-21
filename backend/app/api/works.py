@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app import chapters, models, schemas
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.security import get_current_user
+from app.security import get_current_user, get_current_user_optional
 from app.zfile_client import (
     COVER_EXTS,
     ZFilePath,
@@ -40,12 +40,20 @@ def _user_ref(user: models.User) -> Dict[str, Any]:
     return {"id": user.id, "nickname": user.nickname, "qq": user.qq}
 
 
+def _can_view_work(w: models.Work, me: Optional[models.User]) -> bool:
+    """非发布态（待审核/草稿）仅上传者本人与管理员可见。"""
+    if w.status == models.WorkStatus.PUBLISHED:
+        return True
+    return me is not None and (me.role == models.UserRole.ADMIN or w.uploader_id == me.id)
+
+
 def _work_out(work: models.Work) -> Dict[str, Any]:
     return {
         "id": work.id,
         "title": work.title,
         "author": work.author,
         "type": work.type,
+        "status": work.status,
         "source_work_id": work.source_work_id,
         "source_work_title": work.source_work.title if work.source_work else None,
         "cover_url": public_url(work.cover_url),
@@ -126,10 +134,14 @@ def work_detail(
     work_id: int,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    me: Optional[models.User] = Depends(get_current_user_optional),
 ):
-    """作品详情（同时作为 helper：外部调用时可直接传入 settings=get_settings()）。"""
+    """作品详情（同时作为 helper：外部调用时可直接传入 settings=get_settings()/me）。
+
+    待审核/草稿作品只有上传者本人和管理员可见，其他人按 404 处理（避免泄露标题）。
+    """
     w = db.query(models.Work).filter(models.Work.id == work_id).first()
-    if w is None:
+    if w is None or not _can_view_work(w, me):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
 
     links = (
@@ -210,7 +222,7 @@ def update_work(
     db.commit()
     db.refresh(w)
     # 返回最新详情，前端无需二次拉取
-    return work_detail(work_id, db, settings=get_settings())
+    return work_detail(work_id, db, settings=get_settings(), me=me)
 
 
 # ------------------- 上传 -------------------
@@ -219,13 +231,20 @@ def update_work(
 def create_work(
     payload: schemas.WorkIn,
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     me: models.User = Depends(get_current_user),
 ):
-    """F3：上传作品（人人可发）。title 必填；其他字段为空即为「仅名称」模式。"""
-    # 简易去重：若标题完全相同的作品已存在，给出提示（不强制阻止，避免误杀，详见 PRD F3）
+    """F3：上传作品（人人可发）。title 必填；其他字段为空即为「仅名称」模式。
+
+    开启「新作品需审核」站点设置后，新作品先入 pending，管理员审核通过后公开。
+    """
+    # 简易去重：仅与已发布作品比标题，避免把他人待审核/草稿作品的 ID 泄露给提交者
     dup = (
         db.query(models.Work)
-        .filter(models.Work.title == payload.title)
+        .filter(
+            models.Work.title == payload.title,
+            models.Work.status == models.WorkStatus.PUBLISHED,
+        )
         .first()
     )
     if dup is not None:
@@ -235,6 +254,9 @@ def create_work(
             detail=f"已存在同名作品（ID={dup.id}），请先前往查看并标记为支持者，或确认后再上传。",
         )
 
+    initial_status = (
+        models.WorkStatus.PENDING if settings.works_require_review else models.WorkStatus.PUBLISHED
+    )
     w = models.Work(
         title=payload.title,
         author=payload.author,
@@ -244,7 +266,7 @@ def create_work(
         cover_url=payload.cover_url,
         uploader_id=me.id,
         tags_json=payload.tags or [],
-        status=models.WorkStatus.PUBLISHED,
+        status=initial_status,
     )
     db.add(w)
     db.flush()
@@ -271,6 +293,7 @@ def create_work(
         title=w.title,
         author=w.author,
         type=w.type,
+        status=w.status,
         summary=w.summary,
         uploader=_user_ref(me),
         tags=w.tags_json or [],
@@ -289,7 +312,7 @@ def patch_relation(
 ):
     """F5：本人绑定/取消 supporter 或 recommender、更新阅读状态。"""
     w = db.query(models.Work).filter(models.Work.id == work_id).first()
-    if w is None:
+    if w is None or not _can_view_work(w, me):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
 
     rel = (
@@ -464,7 +487,7 @@ def set_work_file_cover(
     if not _can_manage_work(w, me):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改他人作品封面")
 
-    ef = _ef_or_404(db, work_id, file_id)
+    ef = _ef_or_404(db, work_id, file_id, me)
     w.cover_url = ef.url
     db.commit()
     return {"ok": True, "cover_url": public_url(ef.url), "file_name": ef.file_name}
@@ -561,9 +584,9 @@ def add_work_file_url(
 
 # ------------------- 章节 / 站内阅读代理 / 下载 -------------------
 
-def _work_and_files(db: Session, work_id: int):
+def _work_and_files(db: Session, work_id: int, me: Optional[models.User] = None):
     w = db.query(models.Work).filter(models.Work.id == work_id).first()
-    if w is None:
+    if w is None or not _can_view_work(w, me):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
     files = (
         db.query(models.WorkExternalFile)
@@ -574,7 +597,12 @@ def _work_and_files(db: Session, work_id: int):
     return w, files
 
 
-def _ef_or_404(db: Session, work_id: int, file_id: int) -> models.WorkExternalFile:
+def _ef_or_404(
+    db: Session, work_id: int, file_id: int, me: Optional[models.User] = None
+) -> models.WorkExternalFile:
+    w = db.query(models.Work).filter(models.Work.id == work_id).first()
+    if w is None or not _can_view_work(w, me):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
     ef = (
         db.query(models.WorkExternalFile)
         .filter(models.WorkExternalFile.id == file_id, models.WorkExternalFile.work_id == work_id)
@@ -600,13 +628,17 @@ def _attachment_headers(file_name: str, media_type: str) -> Dict[str, str]:
 
 
 @router.get("/{work_id}/chapters")
-def work_chapters(work_id: int, db: Session = Depends(get_db)):
+def work_chapters(
+    work_id: int,
+    db: Session = Depends(get_db),
+    me: Optional[models.User] = Depends(get_current_user_optional),
+):
     """章节列表。
 
     - 单文件可抽出正文（txt/md/epub/docx/doc…）→ mode=split，按目录或「第X章」切章（哪怕只有 1 章也走文本阅读）
     - 其余情况（多文件 / PDF / 媒体 / 抽出失败）→ mode=file，每个文件 = 一章
     """
-    _, files = _work_and_files(db, work_id)
+    _, files = _work_and_files(db, work_id, me)
     if not files:
         return {"mode": "file", "chapters": []}
 
@@ -660,6 +692,7 @@ def file_raw(
     db: Session = Depends(get_db),
     start: Optional[int] = Query(None, ge=0),
     end: Optional[int] = Query(None, ge=1),
+    me: Optional[models.User] = Depends(get_current_user_optional),
 ):
     """代理拉取 zfile 文件内容并补正确的 Content-Type/charset（站内阅读专用）。
 
@@ -667,7 +700,7 @@ def file_raw(
     - 图片/视频/音频/PDF：inline 原文件流，供站内观看
     - 其它（zip/mobi…）：attachment 触发下载
     """
-    ef = _ef_or_404(db, work_id, file_id)
+    ef = _ef_or_404(db, work_id, file_id, me)
     ext = chapters.ext_of(ef.file_name)
     media_type, disposition = chapters.content_type_for(ext)
 
@@ -709,6 +742,7 @@ def work_download(
     db: Session = Depends(get_db),
     files: Optional[str] = Query(None, description="逗号分隔的文件 id（选章下载；多文件作品的选章=选文件）"),
     chapters_param: Optional[str] = Query(None, alias="chapters", description="逗号分隔的章节序号（仅单文本文件作品，按序抽取章节合并为 TXT）"),
+    me: Optional[models.User] = Depends(get_current_user_optional),
 ):
     """作品下载。
 
@@ -716,7 +750,7 @@ def work_download(
     - files=1,2 → 下载指定文件（规则同上，针对子集）
     - files=1&chapters=0,2 → 单文本文件作品抽取指定章节，按序合并成一个 TXT
     """
-    w, all_files = _work_and_files(db, work_id)
+    w, all_files = _work_and_files(db, work_id, me)
     if not all_files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="作品暂无可下载的文件")
 

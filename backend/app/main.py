@@ -12,8 +12,13 @@ from .db import init_db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时建表、停站时收尾。"""
+    """启动时建表、载入管理员持久化设置，停站时收尾。"""
     init_db()
+    # 管理后台改过的运行时设置（admin_settings 表）覆盖 .env 默认值
+    from .db import SessionLocal
+    from .runtime_settings import load_runtime_settings
+    with SessionLocal() as db:
+        load_runtime_settings(db)
     yield
 
 

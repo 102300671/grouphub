@@ -14,7 +14,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from nonebot import get_bots, logger
-from nonebot.adapters import Bot
+from nonebot.adapters import Bot, Event
 
 from .client import backend_client
 
@@ -148,15 +148,17 @@ async def send_private(qq: str, message: str) -> Dict[str, Any]:
 
 # ------------------ openid → 真实 QQ 解析（带 TTL 缓存） ------------------
 
-_openid_cache: Dict[Tuple[str, str], Tuple[float, Optional[str]]] = {}
+# value: (时间戳, (qq, is_active))；qq 为 None=未注册；is_active 为 None=状态未知（放行）
+_openid_cache: Dict[Tuple[str, str], Tuple[float, Optional[Tuple[Optional[str], Optional[bool]]]]] = {}
 _OPENID_CACHE_TTL_SECONDS = 600.0
 
 
-async def resolve_sender_qq(event: Event) -> Optional[str]:
-    """从消息事件取发送者真实 QQ；无法识别返回 None。
+async def resolve_sender_info(event: Event) -> Optional[Tuple[Optional[str], Optional[bool]]]:
+    """从消息事件解析发送者 (真实QQ, 账号是否启用)；无法识别通道返回 None。
 
     OneBot v11：get_user_id() 即真实 QQ（纯数字）。
     QQ 官方：get_user_id() 是 openid（非数字），查注册绑定映射换回真实 QQ。
+    两种通道都经后端 resolve-openid 取 is_active（被管理员禁用的用户拦截在命令入口）。
     供 cli_router 的 require_registered 统一校验、各 handler 复用。
     """
     try:
@@ -168,35 +170,50 @@ async def resolve_sender_qq(event: Event) -> Optional[str]:
     if not uid:
         return None
     uid = str(uid)
-    if uid.isdigit():
-        return uid
     openid_type = "group" if getattr(event, "group_openid", None) else "c2c"
-    return await resolve_openid_qq(uid, openid_type)
+    return await resolve_openid_info(uid, openid_type)
 
 
-async def resolve_openid_qq(openid: str, openid_type: str = "group") -> Optional[str]:
-    """把 QQ 官方平台的 openid 解析为真实 QQ 号（注册绑定时建立映射）。
+async def resolve_sender_qq(event: Event) -> Optional[str]:
+    """resolve_sender_info 的旧接口：只取真实 QQ。"""
+    info = await resolve_sender_info(event)
+    return info[0] if info else None
+
+
+async def resolve_openid_info(
+    openid: str, openid_type: str = "group"
+) -> Optional[Tuple[Optional[str], Optional[bool]]]:
+    """把发送者标识解析为 (真实QQ, is_active)。
 
     查询后端 GET /bot/auth/resolve-openid，结果（含未绑定）缓存 10 分钟。
-    解析失败/未绑定返回 None。
+    OneBot 通道入参本身是纯数字 QQ，后端会直接按 QQ 查 users.is_active。
+    网络失败时不缓存，返回 None（调用方按「无法识别」处理，不锁死命令）。
     """
     key = (openid, openid_type)
     now = time.monotonic()
     cached = _openid_cache.get(key)
     if cached is not None and now - cached[0] < _OPENID_CACHE_TTL_SECONDS:
         return cached[1]
-    qq: Optional[str] = None
+    info: Optional[Tuple[Optional[str], Optional[bool]]] = None
     try:
         resp = await backend_client.get(
             "/bot/auth/resolve-openid",
             params={"openid": openid, "openid_type": openid_type},
         )
         resp.raise_for_status()
-        qq = resp.json().get("qq") or None
+        body = resp.json()
+        info = (body.get("qq") or None, body.get("is_active"))
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[bots] openid 解析失败：type={openid_type} err={exc}")
-    _openid_cache[key] = (now, qq)
-    return qq
+        return None
+    _openid_cache[key] = (now, info)
+    return info
+
+
+async def resolve_openid_qq(openid: str, openid_type: str = "group") -> Optional[str]:
+    """resolve_openid_info 的旧接口：只取真实 QQ 号。"""
+    info = await resolve_openid_info(openid, openid_type)
+    return info[0] if info else None
 
 
 # ------------------ QQ 官方 openapi 通用请求 ------------------
@@ -312,6 +329,8 @@ __all__ = [
     "onebot_bots",
     "send_private",
     "resolve_openid_qq",
+    "resolve_openid_info",
+    "resolve_sender_info",
     "qq_openapi_request",
     "get_group_name_by_openid",
 ]

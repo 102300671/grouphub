@@ -127,6 +127,12 @@ def get_current_user(
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    # 站点级封禁：禁用后已签发 token 立即失效
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="你的账号已被管理员禁用，如有疑问请联系管理员",
+        )
     # 退群/被踢后白名单失效：已签发的 token 在下一次鉴权时立即拒绝（PRD §6.1）
     if not is_qq_in_group(user.qq, db):
         raise HTTPException(
@@ -151,7 +157,7 @@ def get_current_user_optional(
     if user_id is None:
         return None
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if user is None:
+    if user is None or not user.is_active:
         return None
     # 退群后登录态同样失效：按匿名用户处理
     if not is_qq_in_group(user.qq, db):

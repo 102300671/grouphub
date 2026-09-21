@@ -32,7 +32,7 @@ from .commands import auth as auth_cmd
 from .commands import help as help_cmd
 from .commands import sync as sync_cmd
 from .commands import work as work_cmd
-from ._lib.bots import AtSenderBot, resolve_sender_qq
+from ._lib.bots import AtSenderBot, resolve_sender_info
 
 # ------------------ 启动时构建命令注册表 ------------------
 
@@ -100,14 +100,24 @@ async def _dispatch(bot: Bot, event: Event, state: T_State) -> None:
         await bot.send(event, f"⚠️ {command.display} 仅管理员可用")
         return
 
-    # 注册绑定校验：require_registered 的命令需先识别出真实 QQ（未注册绑定的用户拿不到）
+    # 注册绑定 + 封禁校验：require_registered 的命令需先识别出真实 QQ，
+    # 且站点账号未被管理员禁用（is_active=False）。
     if command.require_registered:
-        qq = await resolve_sender_qq(event)
+        info = await resolve_sender_info(event)
+        qq = info[0] if info else None
+        is_active = info[1] if info else None
         if not qq:
             await bot.send(
                 event,
                 "⚠️ 请先在站点完成注册绑定（注册页会给你一个验证码，"
                 "发给机器人即可），再使用此功能。",
+            )
+            return
+        if is_active is False:
+            await bot.send(
+                event,
+                "⚠️ 你的站点账号已被管理员禁用，无法使用机器人功能。"
+                "如有疑问请联系管理员处理。",
             )
             return
 

@@ -14,12 +14,11 @@
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -185,11 +184,17 @@ def _http() -> httpx.AsyncClient:
 
 
 async def _chat(
-    messages: List[Dict[str, str]], *, base: str, key: str, model: Optional[str]
+    messages: List[Dict[str, str]],
+    *,
+    base: str,
+    key: str,
+    model: Optional[str],
+    on_delta: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> str:
-    """调用 chat/completions，返回首条回复文本。失败抛 CommandError（中文可读）。
+    """调用 chat/completions（流式），返回首条回复文本。失败抛 CommandError（中文可读）。
 
     base/key/model 由调用方按「用户生效配置」或「.env.prod 默认」解析后传入。
+    on_delta 可选：每收到一段正文增量就回调，用于 QQ 单聊实时流式打字机效果。
     """
     if not base:
         raise CommandError(
@@ -204,35 +209,43 @@ async def _chat(
 
     url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
     headers = {"Authorization": f"Bearer {key}"} if key else {}
+    collected = ""
     try:
-        resp = await _http().post(
-            url, json={"model": model, "messages": messages}, headers=headers
-        )
+        async with _http().stream(
+            "POST",
+            url,
+            json={"model": model, "messages": messages, "stream": True},
+            headers=headers,
+        ) as resp:
+            if resp.status_code != 200:
+                text = (await resp.aread()).decode("utf-8", "ignore")[:300]
+                logger.error(f"[ai] 接口返回 {resp.status_code}：{text}")
+                raise CommandError(f"⚠️ AI 接口返回 {resp.status_code}：{text}")
+            async for line in resp.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    piece = chunk["choices"][0]["delta"].get("content") or ""
+                except (ValueError, KeyError, IndexError):
+                    continue
+                if piece:
+                    collected += piece
+                    if on_delta is not None:
+                        try:
+                            await on_delta(piece)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.debug(f"[ai] on_delta 回调异常（不影响主流程）：{exc}")
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         logger.error(f"[ai] 请求失败：{url} -> {exc!r}")
         raise CommandError(f"⚠️ AI 接口连接失败（{url}）：{exc}") from exc
 
-    if resp.status_code != 200:
-        try:
-            data = resp.json()
-            detail = (
-                (data.get("error") or {}).get("message")
-                or data.get("message")
-                or resp.text[:200]
-            )
-        except Exception:  # noqa: BLE001
-            detail = resp.text[:200]
-        logger.error(f"[ai] 接口返回 {resp.status_code}：{detail}")
-        raise CommandError(f"⚠️ AI 接口返回 {resp.status_code}：{detail}")
-
-    try:
-        content = resp.json()["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, ValueError) as exc:
-        logger.error(f"[ai] 返回格式异常：{resp.text[:300]}")
-        raise CommandError("⚠️ AI 返回格式异常，请检查模型名是否正确。") from exc
-    if not (content and str(content).strip()):
+    if not collected.strip():
         raise CommandError("⚠️ AI 返回了空内容。")
-    return str(content).strip()
+    return collected.strip()
 
 
 # ------------------ SearXNG 联网搜索 ------------------
@@ -350,83 +363,68 @@ def _c2c_openid(event: Event) -> Optional[str]:
     return None
 
 
-def _stream_chunks(text: str, size: int = 50) -> List[str]:
-    """按标点/换行优先切块，每块约 size 字符（流式打字机节奏）。"""
-    if not text:
-        return []
-    if len(text) <= size:
-        return [text]
-    chunks: List[str] = []
-    cur = ""
-    for ch in text:
-        cur += ch
-        if ch in "。！？；\n" and len(cur) >= 6:
-            chunks.append(cur)
-            cur = ""
-        elif len(cur) >= size:
-            chunks.append(cur)
-            cur = ""
-    if cur:
-        chunks.append(cur)
-    return chunks or [text]
+class _C2CStreamer:
+    """QQ 官方单聊实时流式发送器：边收模型增量边推 stream_messages。
 
-
-async def _send_c2c_stream(
-    bot: Bot, event: Event, openid: str, text: str, msg_id: Optional[str] = None
-) -> None:
-    """QQ 官方单聊流式发送：/v2/users/{openid}/stream_messages。
-
-    协议：input_mode=replace（每帧传完整当前文本），input_state 1=生成中 / 10=完成，
-    index 从 0 递增，首帧返回 stream_msg_id 供后续帧携带；帧间 ~300ms 打字机节奏。
-    失败降级为普通分段消息。
+    协议：input_mode=replace（每帧传当前累计全文），input_state 1=生成中 / 10=完成，
+    index 从 0 递增，首帧返回 stream_msg_id 供后续帧携带；帧间 ~300ms 节流。
+    完成后必须调用 finish() 发送 input_state=10 收尾。
     """
-    if not text:
-        return
-    chunks = _stream_chunks(text)
-    msg_seq = int(time.time() * 1000) % 65536
-    stream_msg_id: Optional[str] = None
-    index = 0
-    accumulated = ""
-    try:
-        for chunk in chunks:
-            accumulated += chunk
-            body: Dict[str, object] = {
-                "input_mode": "replace",
-                "input_state": 1,
-                "content_type": "markdown",
-                "content_raw": accumulated,
-                "msg_seq": msg_seq,
-                "index": index,
-            }
-            if msg_id:
-                body["msg_id"] = msg_id
-            if stream_msg_id:
-                body["stream_msg_id"] = stream_msg_id
-            resp = await qq_openapi_request(
-                bot, "POST", f"/v2/users/{openid}/stream_messages", json_body=body
-            )
-            if stream_msg_id is None and isinstance(resp, dict) and resp.get("id"):
-                stream_msg_id = str(resp["id"])
-            index += 1
-            await asyncio.sleep(0.3)
-        body = {
+
+    def __init__(self, bot: Bot, event: Event, openid: str, msg_id: Optional[str] = None):
+        self.bot = bot
+        self.event = event
+        self.openid = openid
+        self.msg_id = msg_id
+        self.accumulated = ""
+        self.msg_seq = int(time.time() * 1000) % 65536
+        self.stream_msg_id: Optional[str] = None
+        self.index = 0
+        self._last_send = 0.0
+        self._closed = False
+
+    async def send(self, piece: str) -> None:
+        """追加一段增量文本，节流发送（~5 帧/秒）。"""
+        if self._closed:
+            return
+        self.accumulated += piece
+        now = time.monotonic()
+        if now - self._last_send < 0.2:  # 节流：每 200ms 最多一帧
+            return
+        self._last_send = now
+        await self._push(input_state=1)
+
+    async def finish(self) -> None:
+        """收尾：发送 input_state=10 完成帧。"""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self._push(input_state=10)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[ai] C2C 流式收尾失败，降级普通消息：{exc}")
+            for chunk in _split_message(self.accumulated):
+                await self.bot.send(self.event, chunk)
+
+    async def _push(self, input_state: int) -> None:
+        body: Dict[str, object] = {
             "input_mode": "replace",
-            "input_state": 10,
+            "input_state": input_state,
             "content_type": "markdown",
-            "content_raw": accumulated,
-            "msg_seq": msg_seq,
-            "index": index,
-            "stream_msg_id": stream_msg_id,
+            "content_raw": self.accumulated,
+            "msg_seq": self.msg_seq,
+            "index": self.index,
         }
-        if msg_id:
-            body["msg_id"] = msg_id
-        await qq_openapi_request(
-            bot, "POST", f"/v2/users/{openid}/stream_messages", json_body=body
+        if self.msg_id:
+            body["msg_id"] = self.msg_id
+        if self.stream_msg_id:
+            body["stream_msg_id"] = self.stream_msg_id
+        resp = await qq_openapi_request(
+            self.bot, "POST", f"/v2/users/{self.openid}/stream_messages", json_body=body
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[ai] C2C 流式发送失败，降级普通消息：{exc}")
-        for chunk in _split_message(text):
-            await bot.send(event, chunk)
+        if self.stream_msg_id is None and isinstance(resp, dict) and resp.get("id"):
+            self.stream_msg_id = str(resp["id"])
+        self.index += 1
 
 
 def _split_message(text: str, limit: int = 1500) -> List[str]:
@@ -957,6 +955,12 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     messages.extend(history)
     messages.append({"role": "user", "content": question})
 
+    c2c_uid = _c2c_openid(event)
+    is_c2c_stream = _is_private(event) and c2c_uid is not None
+    streamer: Optional[_C2CStreamer] = None
+    if is_c2c_stream:
+        streamer = _C2CStreamer(bot, event, c2c_uid, msg_id=getattr(event, "id", None) or None)
+
     async def _on_agent_event(kind: str, payload: Dict[str, object]) -> None:
         # 群聊精简：不发送「思考中」类占位；只保留工具调用过程的可见回复
         if kind == "tool_call" and payload.get("name") == "web:search":
@@ -966,7 +970,10 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         # tool_error 的详细日志由 _lib/aitools 统一输出
 
     async def _chat_once(msgs: List[Dict[str, str]]) -> str:
-        return await _chat(msgs, base=base, key=key, model=final_model)
+        return await _chat(
+            msgs, base=base, key=key, model=final_model,
+            on_delta=streamer.send if streamer is not None else None,
+        )
 
     try:
         answer = await aitools.run_agent_turn(
@@ -1008,10 +1015,9 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         if len(history) > _MAX_ROUNDS * 2:
             del history[: len(history) - _MAX_ROUNDS * 2]
 
-    c2c_uid = _c2c_openid(event)
-    if _is_private(event) and c2c_uid:
-        # QQ 官方单聊：流式发送（stream_messages，打字机效果）
-        await _send_c2c_stream(bot, event, c2c_uid, answer, msg_id=getattr(event, "id", None) or None)
+    if streamer is not None:
+        # QQ 官方单聊：实时流式已在 _chat 中边生成边推送，这里收尾
+        await streamer.finish()
     else:
         for chunk in _split_message(answer):
             await bot.send(event, chunk)

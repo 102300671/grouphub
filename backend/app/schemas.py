@@ -156,6 +156,22 @@ class ProfileUpdateIn(BaseModel):
     nickname: str = Field(..., min_length=1, max_length=50)
 
 
+class AdminPatchActiveIn(BaseModel):
+    """管理员启用/禁用用户。"""
+    is_active: bool
+
+
+class AdminSettingsPatchIn(BaseModel):
+    """管理后台运行时设置（任一字段可选，只改传入项；持久化到 admin_settings 表）。"""
+    show_relation_threshold: Optional[int] = Field(None, ge=0, le=1000)
+    works_require_review: Optional[bool] = None
+
+
+class AdminWorkStatusPatchIn(BaseModel):
+    """作品审核：通过=published，驳回=draft，也可改回 pending。"""
+    status: str = Field(pattern=r"^(published|draft|pending)$")
+
+
 class BindingsListOut(BaseModel):
     """当前用户的所有 openid 绑定列表。"""
     ok: bool = True
@@ -190,9 +206,14 @@ class BotVerifyRegisterIn(BaseModel):
 
 
 class BotResolveOpenidOut(BaseModel):
-    """openid → 真实 QQ 解析结果。"""
+    """openid → 真实 QQ 解析结果。
+
+    入参 openid 为纯数字时按真实 QQ 直查（OneBot v11 通道）。
+    is_active 为站点账号封禁状态：None=查无账号（视为未注册）。
+    """
     ok: bool = True
     qq: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class BotNotifyLoginIn(BaseModel):
@@ -236,6 +257,7 @@ class WorkOut(BaseModel):
     title: str
     author: Optional[str] = None
     type: str
+    status: str = "published"
     source_work_id: Optional[int] = None
     source_work_title: Optional[str] = None
     cover_url: Optional[str] = None

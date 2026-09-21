@@ -85,6 +85,7 @@ def _user_out(user: models.User) -> Dict[str, Any]:
         "nickname": user.nickname,
         "avatar_url": public_url(user.avatar_url),
         "role": user.role,
+        "is_active": user.is_active,
     }
 
 
@@ -350,6 +351,8 @@ def login(payload: schemas.LoginIn, request: Request, db: Session = Depends(get_
     user = db.query(models.User).filter(models.User.qq == payload.qq).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="你的账号已被管理员禁用，如有疑问请联系管理员")
     if not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
 
@@ -490,6 +493,11 @@ def confirm_code(payload: schemas.ConfirmCodeIn, request: Request, db: Session =
         db.commit()
         db.refresh(user)
     else:
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="你的账号已被管理员禁用，如有疑问请联系管理员",
+            )
         # 老用户同样保证 ADMIN_QQS 提权立即生效
         _auto_promote_check(user, settings)
 
@@ -650,6 +658,7 @@ def get_user_works(
             "title": w.title,
             "type": w.type,
             "author": w.author,
+            "status": w.status,
             "cover_url": public_url(w.cover_url) if w.cover_url else None,
             "updated_at": w.updated_at.isoformat() if w.updated_at else None,
         }

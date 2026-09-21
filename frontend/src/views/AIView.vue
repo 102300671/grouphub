@@ -349,7 +349,7 @@ async function send() {
 
   try {
     if (isLocal) {
-      await sendLocal(convId, cfg as AIConfig, content, onDelta);
+      await sendLocal(convId, cfg as AIConfig, content, onDelta, onReasoning);
     } else {
       await sendRemote(convId, {
         onDelta,
@@ -392,6 +392,7 @@ async function sendLocal(
   cfg: AIConfig,
   content: string,
   onDelta: (t: string) => void,
+  onReasoning?: (t: string) => void,
 ) {
   if (!cfg.api_base || !cfg.model) {
     throw new Error("本地配置不完整：请在「AI 配置」中补全端点与模型名。");
@@ -417,6 +418,7 @@ async function sendLocal(
       answer += piece;
       onDelta(piece);
     },
+    onReasoning,
   );
   await aiClient.appendMessage(convId, "assistant", answer);
 }

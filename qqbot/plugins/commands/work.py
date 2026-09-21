@@ -266,12 +266,17 @@ async def add(bot: Bot, event: Event, result: ParseResult) -> None:
         return
 
     w = data.get("work", {})
-    lines = [f"📖 已安利入库：{w.get('title')}（ID={w.get('id')}）"]
+    if w.get("status") == "pending":
+        lines = [f"📖 已提交安利：{w.get('title')}（ID={w.get('id')}）"]
+        lines.append("当前站点开启了作品审核，管理员通过后才会公开。")
+    else:
+        lines = [f"📖 已安利入库：{w.get('title')}（ID={w.get('id')}）"]
     if data.get("designated_uploader"):
         lines.append(f"（已指定上传者 QQ {uploader_qq}）")
     elif data.get("created_user"):
         lines.append("（你还没有站点账号，已按群名片自动创建，首次登录用验证码即可）")
-    lines.append(f"查看详情：{SITE_BASE_URL}/works/{w.get('id')}")
+    if w.get("status") != "pending":
+        lines.append(f"查看详情：{SITE_BASE_URL}/works/{w.get('id')}")
     await bot.send(event, "\n".join(lines))
 
 
@@ -463,14 +468,20 @@ async def _site_add_tool(args: Dict[str, str]) -> str:
         return f"上传失败：{data.get('message', '未知原因')}。请把这句话如实转告用户。"
 
     w = data.get("work", {})
-    parts = [f"已上传：《{w.get('title')}》（ID={w.get('id')}）"]
+    pending = w.get("status") == "pending"
+    parts = [
+        f"已提交（待管理员审核）：《{w.get('title')}》（ID={w.get('id')}）"
+        if pending
+        else f"已上传：《{w.get('title')}》（ID={w.get('id')}）"
+    ]
     if w.get("author"):
         parts.append(f"作者：{w['author']}")
     if w.get("type"):
         parts.append(f"类型：{w['type']}")
     if w.get("summary"):
         parts.append(f"简介：{w['summary']}")
-    parts.append(f"详情：{SITE_BASE_URL}/works/{w.get('id')}")
+    if not pending:
+        parts.append(f"详情：{SITE_BASE_URL}/works/{w.get('id')}")
     return " · ".join(parts)
 
 

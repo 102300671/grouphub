@@ -60,12 +60,19 @@ onMounted(loadSummary);
         <div class="stat-card card">
           <div class="label muted text-sm">注册用户</div>
           <div class="value">{{ summary.counts.users }}</div>
-          <div class="note muted text-sm">白名单活跃 {{ summary.counts.group_members_active }} 人</div>
+          <div class="note muted text-sm">
+            白名单活跃 {{ summary.counts.group_members_active }} 人 ·
+            <RouterLink to="/admin/users">已禁用 {{ summary.counts.users_disabled }} 人</RouterLink>
+          </div>
         </div>
         <div class="stat-card card">
           <div class="label muted text-sm">作品数</div>
           <div class="value">{{ summary.counts.works }}</div>
-          <div class="note muted text-sm">当前「关系人数阈值」：{{ summary.show_relation_threshold }}</div>
+          <div class="note muted text-sm">
+            <RouterLink to="/admin/works">待审核 {{ summary.counts.works_pending }} 件</RouterLink>
+            · 关系阈值 {{ summary.show_relation_threshold }}
+            · 审核{{ summary.works_require_review ? "开" : "关" }}
+          </div>
         </div>
         <div class="stat-card card">
           <div class="label muted text-sm">评论 / 话题 / 同人</div>

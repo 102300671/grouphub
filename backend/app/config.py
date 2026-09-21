@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # 作品详情页「张三、李四 等共 N 人」的展示阈值（PRD §9#5）：关联人数 ≥ 阈值才显示并展开
     show_relation_threshold: int = 3
 
+    # 新作品（网页上传 + 群内安利）是否需要管理员审核后才发布；管理后台可运行时修改并持久化
+    works_require_review: bool = False
+
     # 上传限制（PRD §10 安全要求：文件上传类型 + 大小校验）
     max_upload_mb: int = 32
     # 作品文件（小说/番剧/电影）单独放宽：电影/番剧整片可达数 GB

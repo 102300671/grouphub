@@ -47,6 +47,7 @@ class UserRole(str):
 
 class WorkStatus(str):
     DRAFT = "draft"
+    PENDING = "pending"      # 待审核（开启「新作品需审核」后，新上传/群内安利先入此状态）
     PUBLISHED = "published"
 
 
@@ -102,6 +103,8 @@ class User(Base):
     nickname = Column(String(50), nullable=True)
     avatar_url = Column(String(500), nullable=True)
     role = Column(String(20), nullable=False, default=UserRole.MEMBER, server_default=UserRole.MEMBER)
+    # 站点级封禁：False 后无法登录、token 立即失效、bot 命令拒绝（区别于退群白名单失效）
+    is_active = Column(Boolean, nullable=False, default=True, server_default="1")
     created_at = Column(DateTime, default=_now, nullable=False)
 
 
@@ -442,3 +445,16 @@ class AIMessage(Base):
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=_now, nullable=False)
+
+
+class AdminSetting(Base):
+    """管理员运行时设置（KV 持久化）。
+
+    启动时载入覆盖 settings 单例；管理后台修改同时写库 + 更新内存，重启不丢。
+    key 见 app.runtime_settings.RUNTIME_KEYS。
+    """
+    __tablename__ = "admin_settings"
+
+    key = Column(String(50), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)

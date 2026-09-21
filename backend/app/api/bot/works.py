@@ -33,6 +33,7 @@ def _compact(w: models.Work, score: Optional[int] = None) -> Dict[str, Any]:
         "title": w.title,
         "author": w.author,
         "type": w.type,
+        "status": w.status,
         "summary": summary or None,
         "uploader_nickname": w.uploader.nickname if w.uploader else None,
     }
@@ -163,7 +164,15 @@ def submit_work(
       否则驳回（不自动建号）；qq 仍走自动建号作为提交者记录来源
     - 同名作品已存在 → 不新建，返回 duplicate 提示（提示群友去站点标记支持）
     """
-    dup = db.query(models.Work).filter(models.Work.title == payload.title).first()
+    # 仅与已发布作品去重：待审核/草稿作品不应在群命令里被当作已存在作品而泄露
+    dup = (
+        db.query(models.Work)
+        .filter(
+            models.Work.title == payload.title,
+            models.Work.status == models.WorkStatus.PUBLISHED,
+        )
+        .first()
+    )
     if dup is not None:
         return {
             "ok": False,
@@ -193,6 +202,9 @@ def submit_work(
     # 特权模式下 uploader 已校验过；非特权模式 uploader = 提交者本人
     uploader_obj = uploader if uploader is not None else user
 
+    initial_status = (
+        models.WorkStatus.PENDING if settings.works_require_review else models.WorkStatus.PUBLISHED
+    )
     w = models.Work(
         title=payload.title,
         author=payload.author,
@@ -201,7 +213,7 @@ def submit_work(
         summary=payload.summary,
         uploader_id=uploader_obj.id,
         tags_json=payload.tags or [],
-        status=models.WorkStatus.PUBLISHED,
+        status=initial_status,
     )
     db.add(w)
     db.flush()
@@ -217,11 +229,15 @@ def submit_work(
 
     db.commit()
     db.refresh(w)
+    if w.status == models.WorkStatus.PENDING:
+        message = f"已提交：{w.title}（ID={w.id}），等待管理员审核通过后公开"
+    else:
+        message = f"已入库：{w.title}（ID={w.id}）"
     return {
         "ok": True,
         "duplicate": False,
         "created_user": created,
         "designated_uploader": uploader is not None,  # 是否走了特权模式
         "work": _compact(w),
-        "message": f"已入库：{w.title}（ID={w.id}）",
+        "message": message,
     }

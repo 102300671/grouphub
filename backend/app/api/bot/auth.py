@@ -224,20 +224,39 @@ def verify_register(
 
 @router.get("/resolve-openid", response_model=schemas.BotResolveOpenidOut)
 def resolve_openid(
-    openid: str = Query(..., min_length=8),
+    openid: str = Query(..., min_length=1),
     openid_type: str = Query("group"),
     db: Session = Depends(get_db),
     _: BotAuthenticated = Depends(),
 ) -> schemas.BotResolveOpenidOut:
-    """QQ 官方通道命令（如「安利」）需要把 member_openid/user_openid 解析回真实 QQ。"""
-    if openid_type not in ("group", "c2c"):
-        openid_type = "group"
-    row = (
-        db.query(models.QQOpenidBinding)
-        .filter(
-            models.QQOpenidBinding.openid == openid,
-            models.QQOpenidBinding.openid_type == openid_type,
+    """把发送者标识解析回真实 QQ + 账号状态。
+
+    - QQ 官方通道：member_openid/user_openid → qq_openid_bindings 映射
+    - OneBot v11 通道：发送者标识本身就是纯数字 QQ，直接查 users
+    """
+    qq: Optional[str] = None
+    if openid.isdigit():
+        qq = openid
+    else:
+        if openid_type not in ("group", "c2c"):
+            openid_type = "group"
+        row = (
+            db.query(models.QQOpenidBinding)
+            .filter(
+                models.QQOpenidBinding.openid == openid,
+                models.QQOpenidBinding.openid_type == openid_type,
+            )
+            .first()
         )
-        .first()
+        qq = row.qq if row else None
+
+    if not qq:
+        return schemas.BotResolveOpenidOut(ok=True, qq=None, is_active=None)
+
+    user = db.query(models.User).filter(models.User.qq == qq).first()
+    return schemas.BotResolveOpenidOut(
+        ok=True,
+        qq=qq,
+        # 有绑定但 users 行异常缺失时不锁死命令（None 视为正常）
+        is_active=user.is_active if user is not None else None,
     )
-    return schemas.BotResolveOpenidOut(ok=True, qq=row.qq if row else None)

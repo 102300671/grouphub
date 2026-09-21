@@ -394,6 +394,12 @@ onMounted(load);
     <div v-if="loading" class="muted">加载中…</div>
     <div v-else-if="err" class="alert alert-error">{{ err }}</div>
     <template v-else-if="work">
+      <div v-if="work.status === 'pending'" class="alert" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;">
+        ⏳ 该作品正在等待管理员审核，审核通过后才会公开展示；当前仅你本人和管理员可见。
+      </div>
+      <div v-else-if="work.status === 'draft'" class="alert" style="background:#f3f4f6;color:#374151;">
+        📝 该作品为草稿/已驳回状态，不会公开展示；仅你本人和管理员可见。
+      </div>
       <header class="head">
         <!-- 封面图：有封面 URL 用真实图，否则退回首字母色块 -->
         <div class="cover-wrap">

@@ -67,6 +67,9 @@ def _migrate_sqlite(engine) -> None:
     from sqlalchemy import text
 
     wanted = {
+        "users": {
+            "is_active": "BOOLEAN NOT NULL DEFAULT 1",
+        },
         "verification_codes": {
             "purpose": "VARCHAR(20) NOT NULL DEFAULT 'login'",
         },

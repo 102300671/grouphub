@@ -67,10 +67,12 @@ def list_reviews(
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
-    """作品评论列表。"""
-    from app.models import Work
+    """作品评论列表。待审核/草稿作品仅上传者本人和管理员可见。"""
+    from app.models import UserRole, Work, WorkStatus
     w = db.query(Work).filter(Work.id == work_id).first()
     if w is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
+    if w.status != WorkStatus.PUBLISHED and me.role != UserRole.ADMIN and w.uploader_id != me.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
 
     q = db.query(Review).filter(Review.work_id == work_id)
@@ -91,10 +93,12 @@ def create_review(
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
-    """发表评论。"""
-    from app.models import Work
+    """发表评论。待审核/草稿作品仅上传者本人和管理员可评论。"""
+    from app.models import UserRole, Work, WorkStatus
     w = db.query(Work).filter(Work.id == work_id).first()
     if w is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
+    if w.status != WorkStatus.PUBLISHED and me.role != UserRole.ADMIN and w.uploader_id != me.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="作品不存在")
 
     r = Review(

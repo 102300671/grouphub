@@ -354,6 +354,7 @@ export async function streamLocalChat(
   endpoint: { api_base: string; api_key?: string | null; model: string },
   messages: Array<{ role: string; content: string }>,
   onDelta: (text: string) => void,
+  onReasoning?: (text: string) => void,
 ): Promise<void> {
   const base = (endpoint.api_base || "").replace(/\/$/, "");
   const url = base.endsWith("/chat/completions")
@@ -386,7 +387,10 @@ export async function streamLocalChat(
       if (!data || data === "[DONE]") continue;
       try {
         const chunk = JSON.parse(data);
-        const piece = chunk.choices?.[0]?.delta?.content || "";
+        const delta = chunk.choices?.[0]?.delta || {};
+        const reasoning = delta.reasoning_content || "";
+        if (reasoning && onReasoning) onReasoning(reasoning);
+        const piece = delta.content || "";
         if (piece) onDelta(piece);
       } catch (SyntaxError) {
         // 忽略半行/心跳

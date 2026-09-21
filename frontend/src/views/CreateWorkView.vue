@@ -141,7 +141,7 @@ async function submit() {
       .filter(Boolean);
 
     // 1) 创建作品（不带 cover_url）
-    const work = await request<{ id: number }>({
+    const work = await request<{ id: number; status?: string }>({
       url: "/works/",
       method: "POST",
       data: {
@@ -154,6 +154,7 @@ async function submit() {
         links: linkList.value,
       },
     });
+    const isPending = work.status === "pending";
 
     // 2) 封面图 → 上传并回写 cover_url
     if (coverFile.value) {
@@ -175,8 +176,11 @@ async function submit() {
       await worksClient.uploadFilesBatch(work.id, batchFiles.value);
     }
 
-    // 5) 跳转详情
-    router.push(`/works/${work.id}`);
+    // 5) 跳转详情（待审核作品仅本人/管理员可见，详情页会展示待审核横幅）
+    success.value = isPending
+      ? "已提交，等待管理员审核通过后公开。审核期间仅你本人可以查看该作品。"
+      : "作品已发布！";
+    router.push({ path: `/works/${work.id}`, query: isPending ? { submitted: "1" } : {} });
   } catch (e: any) {
     error.value = extractErrMsg(e, "提交失败");
   } finally {

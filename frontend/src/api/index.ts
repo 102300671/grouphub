@@ -1,6 +1,6 @@
 import type { AuthUser, AuthTokenOut } from "@/types/api";
 import { apiBase, authClient, request, extractErrMsg } from "@/api/http";
-import type { Work, WorkDetail, WorkFile, WorkChaptersResponse, Fanwork, FanworkListResponse, FanworkDetailResponse, FanworkAttachment } from "@/types/api";
+import type { Work, WorkDetail, WorkFile, WorkChaptersResponse, Fanwork, FanworkListResponse, FanworkDetailResponse, FanworkAttachment, AdminUser, AdminSettings, AdminSummary, AdminWorkListResponse, WorkStatus } from "@/types/api";
 
 /** 按直链扩展名猜附件类型：image / video / audio / file */
 export function guessAttType(url: string): "image" | "video" | "audio" | "file" {
@@ -203,20 +203,27 @@ export const fanworksClient = {
 
 export type { Fanwork };
 
-export type AdminUser = AuthUser & { created_at?: string };
+export type { AdminUser, AdminSettings, AdminSummary, AdminWorkListResponse };
 
 export const adminClient = {
   me() {
-    return request<AdminUser>({ url: "/admin/me", method: "GET" });
+    return request<AuthUser>({ url: "/admin/me", method: "GET" });
   },
   summary() {
-    return request<{ counts: Record<string, number>; show_relation_threshold: number; admin_count_in_env: number; current_admin_qqs: string[] }>({ url: "/admin/summary", method: "GET" });
+    return request<AdminSummary>({ url: "/admin/summary", method: "GET" });
   },
-  users(params?: { q?: string; role?: "admin" | "member"; page?: number; size?: number }) {
+  users(params?: { q?: string; role?: "admin" | "member"; active?: boolean; page?: number; page_size?: number }) {
     return request<AdminUser[]>({ url: "/admin/users", method: "GET", params });
   },
   changeRole(id: number, role: "admin" | "member") {
     return request({ url: `/admin/users/${id}/role`, method: "PATCH", data: { role } });
+  },
+  setUserActive(id: number, is_active: boolean) {
+    return request<{ ok: boolean; is_active: boolean; message: string }>({
+      url: `/admin/users/${id}/active`,
+      method: "PATCH",
+      data: { is_active },
+    });
   },
   deleteUser(id: number) {
     return request<{ ok: boolean; message?: string }>({ url: `/admin/users/${id}`, method: "DELETE" });
@@ -224,14 +231,26 @@ export const adminClient = {
   triggerMemberSync() {
     return request<{ ok: boolean; message?: string; note?: string }>({ url: "/admin/trigger_member_sync", method: "POST" });
   },
-  getThreshold() {
-    return request<{ show_relation_threshold: number }>({ url: "/admin/settings/show_relation_threshold", method: "GET" });
+  // ---------- 作品审核 ----------
+  listWorks(params?: { status?: WorkStatus; q?: string; page?: number; page_size?: number }) {
+    return request<AdminWorkListResponse>({ url: "/admin/works", method: "GET", params });
   },
-  setThreshold(threshold: number) {
-    return request<{ ok: boolean; show_relation_threshold: number; note: string }>({
-      url: "/admin/settings/show_relation_threshold",
+  setWorkStatus(id: number, status: WorkStatus) {
+    return request<{ ok: boolean; message: string }>({
+      url: `/admin/works/${id}/status`,
       method: "PATCH",
-      data: { threshold },
+      data: { status },
+    });
+  },
+  // ---------- 站点设置（持久化） ----------
+  getSettings() {
+    return request<AdminSettings>({ url: "/admin/settings", method: "GET" });
+  },
+  patchSettings(data: Partial<AdminSettings>) {
+    return request<{ ok: boolean; settings: AdminSettings; changed: Partial<AdminSettings> }>({
+      url: "/admin/settings",
+      method: "PATCH",
+      data,
     });
   },
 };
