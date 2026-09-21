@@ -159,7 +159,7 @@ def verify_register(
                 qq=target_qq, openid=openid, openid_type=openid_type,
                 group_id=group_id if openid_type == "group" else None,
                 group_openid=(payload.group_openid or None) if openid_type == "group" else None,
-                group_name=(payload.group_name or None),
+                group_name=(payload.group_name or None) if openid_type == "group" else None,
                 created_at=now, updated_at=now,
             ))
         else:

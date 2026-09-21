@@ -19,21 +19,34 @@ from nonebot.adapters import Bot
 from .client import backend_client
 
 
+def _unwrap_bot(bot: Bot) -> Bot:
+    """AtSenderBot 包装对象 → 取出内部真实适配器 bot；其余原样返回。
+
+    cli_router 会把进入命令处理的 bot 统一包成 AtSenderBot，
+    类型判定/底层 openapi 调用必须对内部真实 bot 进行，
+    否则 type(bot).__module__ 命中 plugins._lib.bots 造成误判
+    （历史 bug：群名接口因此恒抛 TypeError，群名一直回退 openid）。
+    """
+    return getattr(bot, "raw_bot", bot)
+
+
 def is_qq_official(bot: Bot) -> bool:
-    """判断 bot 是否来自 QQ 官方适配器（主用）。"""
-    return type(bot).__module__.startswith("nonebot.adapters.qq")
+    """判断 bot 是否来自 QQ 官方适配器（主用）。自动解包 AtSenderBot。"""
+    return type(_unwrap_bot(bot)).__module__.startswith("nonebot.adapters.qq")
 
 
 def is_onebot_v11(bot: Bot) -> bool:
-    """判断 bot 是否来自 OneBot v11 适配器（备用）。"""
-    return type(bot).__module__.startswith("nonebot.adapters.onebot")
+    """判断 bot 是否来自 OneBot v11 适配器（备用）。自动解包 AtSenderBot。"""
+    return type(_unwrap_bot(bot)).__module__.startswith("nonebot.adapters.onebot")
 
 
 class AtSenderBot:
     """包装 bot，让所有 send 调用自动 @ 消息发送者。
 
     OneBot v11：用原生 at_sender=True。
-    QQ 官方：消息前插入 mention_user 段（群消息内 @ 对应 openid）。
+    QQ 官方：群被动回复（send 带 msg_id=event.id）平台会自动 @ 触发者，
+             不能再手动插 mention_user，否则群聊出现双 @（@用户名 + <@openid>），
+             因此直接透传；私聊本来就没有 @。
     其余适配器：透传，不 @。
     所有非 send 方法/属性透传给原始 bot（call_api、get 等）。
     """
@@ -42,40 +55,48 @@ class AtSenderBot:
         self._bot = bot
         self._event = event
 
+    @property
+    def raw_bot(self) -> Bot:
+        """内部真实适配器 bot（供类型判定与底层 openapi 调用解包）。"""
+        return self._bot
+
     async def send(self, event: Any, message: Any, **kwargs: Any) -> Any:
         if is_onebot_v11(self._bot):
             kwargs.setdefault("at_sender", True)
             return await self._bot.send(event, message, **kwargs)
-        if is_qq_official(self._bot):
-            message = _prepend_mention_qq(event, message)
+        # QQ 官方群被动回复已由平台自动 @ 发送者，手动 @ 会导致双 @，故注释：
+        # if is_qq_official(self._bot):
+        #     message = _prepend_mention_qq(event, message)
         return await self._bot.send(event, message, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._bot, name)
 
 
-def _prepend_mention_qq(event: Any, message: Any) -> Any:
-    """QQ 官方适配器：在消息前插入 mention_user 段。"""
-    try:
-        from nonebot.adapters.qq import Message as QQMessage
-        from nonebot.adapters.qq import MessageSegment as QQSegment
-
-        user_id = ""
-        try:
-            user_id = event.get_user_id() or ""
-        except Exception:  # noqa: BLE001
-            pass
-        if not user_id:
-            return message
-        mention = QQSegment.mention_user(user_id)
-        if isinstance(message, QQMessage):
-            return QQMessage(mention) + message
-        if isinstance(message, str):
-            return QQMessage(mention) + QQMessage(QQSegment.text(message))
-        # MessageSegment 或其他
-        return QQMessage(mention) + QQMessage(message)
-    except Exception:  # noqa: BLE001
-        return message
+# QQ 官方手动 @ 逻辑已停用：群被动回复平台自带 @，插入 mention_user 反而双 @。
+# 如需恢复，取消下面注释并在 AtSenderBot.send 中重新调用即可。
+# def _prepend_mention_qq(event: Any, message: Any) -> Any:
+#     """QQ 官方适配器：在消息前插入 mention_user 段。"""
+#     try:
+#         from nonebot.adapters.qq import Message as QQMessage
+#         from nonebot.adapters.qq import MessageSegment as QQSegment
+#
+#         user_id = ""
+#         try:
+#             user_id = event.get_user_id() or ""
+#         except Exception:  # noqa: BLE001
+#             pass
+#         if not user_id:
+#             return message
+#         mention = QQSegment.mention_user(user_id)
+#         if isinstance(message, QQMessage):
+#             return QQMessage(mention) + message
+#         if isinstance(message, str):
+#             return QQMessage(mention) + QQMessage(QQSegment.text(message))
+#         # MessageSegment 或其他
+#         return QQMessage(mention) + QQMessage(message)
+#     except Exception:  # noqa: BLE001
+#         return message
 
 
 def all_bots() -> List[Bot]:
@@ -196,6 +217,7 @@ async def qq_openapi_request(
     仅支持 QQ 官方适配器 bot；返回解析后的 JSON（无响应体时返回 None）；
     非 2xx 抛 RuntimeError（带官方错误码与描述）。
     """
+    bot = _unwrap_bot(bot)
     if not is_qq_official(bot):
         raise TypeError("qq_openapi_request 仅支持 QQ 官方适配器 bot")
 
@@ -233,24 +255,29 @@ async def qq_openapi_request(
 # ------------------ QQ 官方通道：群 openid → 群名称 ------------------
 
 _group_name_cache: Dict[str, Tuple[float, Optional[str]]] = {}
+_GROUP_NAME_CACHE_TTL = 3600.0       # 成功结果缓存 1 小时
+_GROUP_NAME_FAIL_TTL = 60.0         # 失败结果只缓存 1 分钟，避免瞬时故障锁死 1 小时
 
 
 async def get_group_name_by_openid(bot: Bot, group_openid: str) -> Optional[str]:
     """QQ 官方通道查群名称（openapi GET /v2/groups/{group_openid}/info）。
 
     适配器（nonebot-adapter-qq 1.7.x）未封装该 API，call_api 会抛 ApiNotAvailable，
-    因此走 qq_openapi_request 直调（需机器人有接口权限；失败返回 None 并记 debug
-    日志）。结果缓存 1 小时。
+    因此走 qq_openapi_request 直调（需机器人有接口权限；失败返回 None 并记 warning
+    日志）。成功结果缓存 1 小时，失败结果只缓存 1 分钟。
     """
     now = time.monotonic()
     cached = _group_name_cache.get(group_openid)
-    if cached is not None and now - cached[0] < 3600.0:
-        return cached[1]
+    if cached is not None:
+        ttl = _GROUP_NAME_CACHE_TTL if cached[1] else _GROUP_NAME_FAIL_TTL
+        if now - cached[0] < ttl:
+            return cached[1]
 
     name: Optional[str] = None
+    raw_bot = _unwrap_bot(bot)
     # 先试适配器封装（未来版本支持时自动生效）
     try:
-        info = await bot.call_api("get_group_info", group_openid=group_openid)
+        info = await raw_bot.call_api("get_group_info", group_openid=group_openid)
         name = getattr(info, "group_name", None) or (
             info.get("group_name") if isinstance(info, dict) else None
         )
@@ -263,13 +290,13 @@ async def get_group_name_by_openid(bot: Bot, group_openid: str) -> Optional[str]
         for _ in range(2):
             try:
                 data = await qq_openapi_request(
-                    bot, "GET", f"/v2/groups/{group_openid}/info"
+                    raw_bot, "GET", f"/v2/groups/{group_openid}/info"
                 )
                 name = (data or {}).get("group_name") or None
                 if name:
                     break
             except Exception as exc:  # noqa: BLE001
-                logger.debug(f"[bots] 官方通道查群名称失败：openid={group_openid} err={exc}")
+                logger.warning(f"[bots] 官方通道查群名称失败：openid={group_openid} err={exc}")
                 name = None
 
     name = str(name) if name else None

@@ -97,9 +97,14 @@ async function deleteBindingById(id: number) {
   }
 }
 
-function maskOpenid(openid: string): string {
-  if (openid.length <= 8) return openid;
-  return openid.slice(0, 4) + "****" + openid.slice(-4);
+/** 点击用户名切换显示个人 openid（群聊=member_openid，私聊=user_openid） */
+const showUserOpenidId = ref<number | null>(null);
+function toggleUserOpenid(b: OpenidBindingItem) {
+  showUserOpenidId.value = showUserOpenidId.value === b.id ? null : b.id;
+}
+/** 个人身份默认展示站点用户名（注册时手动填的群内名称/QQ 用户名） */
+function personLabel(b: OpenidBindingItem): string {
+  return b.display_name || user.current?.nickname || `QQ ${user.current?.qq ?? ""}`;
 }
 
 /** 点击群名 badge 切换显示 group_openid（官方适配器拿不到群号，只有 group_openid） */
@@ -111,6 +116,38 @@ function toggleGroupOpenid(b: OpenidBindingItem) {
 function groupLabel(b: OpenidBindingItem): string {
   if (showGroupOpenidId.value === b.id) return b.group_openid || "";
   return b.group_name || (b.group_id ? `群 ${b.group_id}` : "群聊");
+}
+
+// 修改显示名称（站点昵称）
+const nameModalVisible = ref(false);
+const nameInput = ref("");
+const nameSaving = ref(false);
+const nameErrorMsg = ref("");
+
+function openNameModal() {
+  nameInput.value = user.current?.nickname || "";
+  nameErrorMsg.value = "";
+  nameModalVisible.value = true;
+}
+
+async function saveDisplayName() {
+  const nickname = nameInput.value.trim();
+  if (!nickname) {
+    nameErrorMsg.value = "显示名称不能为空";
+    return;
+  }
+  nameSaving.value = true;
+  nameErrorMsg.value = "";
+  try {
+    await user.updateNickname(nickname);
+    nameModalVisible.value = false;
+    // 绑定列表的 display_name 来自站点昵称，改名后刷新
+    await loadBindings();
+  } catch (e) {
+    nameErrorMsg.value = extractErrMsg(e, "修改失败");
+  } finally {
+    nameSaving.value = false;
+  }
 }
 
 function copyBindCode() {
@@ -175,6 +212,7 @@ onBeforeUnmount(stopBindPoll);
           <div class="alert alert-info" v-if="tip">{{ tip }}</div>
         </div>
         <div class="mt-4">
+          <button class="btn btn-ghost btn-sm" type="button" @click="openNameModal">✏️ 修改昵称</button>
           <button class="btn btn-ghost btn-sm" type="button" @click="changePwdVisible = true">🔑 修改密码</button>
         </div>
       </div>
@@ -189,7 +227,7 @@ onBeforeUnmount(stopBindPoll);
         </button>
       </div>
       <p class="muted text-sm">
-        绑定后，你在 QQ 群里 @机器人 发送命令时，机器人能识别你的身份。一个 QQ 可绑定多个 openid（如不同群的身份）。
+        绑定后，你在 QQ 群里 @机器人 发送命令时，机器人能识别你的身份。私聊只有一个 openid，每个群各有一个群 openid。点击名称可查看对应的 openid。
       </p>
       <div v-if="bindErrorMsg" class="alert alert-error mt-2">{{ bindErrorMsg }}</div>
       <div v-if="bindLoading" class="card mt-2"><div class="muted text-sm" style="text-align:center;padding:16px">加载中…</div></div>
@@ -202,13 +240,22 @@ onBeforeUnmount(stopBindPoll);
       <div v-else class="binding-list mt-2">
         <div v-for="b in bindings" :key="b.id" class="card binding-item">
           <div class="binding-info">
-            <span class="binding-openid">{{ maskOpenid(b.openid) }}</span>
+            <!-- 场景徽章：群聊显示群名（点击看群 openid），私聊固定为「私聊」 -->
             <span
+              v-if="b.openid_type === 'group'"
               class="badge badge-muted"
-              :class="{ 'badge-clickable': b.openid_type === 'group' && b.group_openid }"
-              :title="b.openid_type === 'group' && b.group_openid ? '点击查看群 openid' : ''"
+              :class="{ 'badge-clickable': !!b.group_openid, 'badge-mono': showGroupOpenidId === b.id }"
+              :title="b.group_openid ? '点击查看群 openid' : ''"
               @click="toggleGroupOpenid(b)"
             >{{ groupLabel(b) }}</span>
+            <span v-else class="badge badge-muted">私聊</span>
+            <!-- 个人身份：默认显示站点用户名，点击显示个人 openid -->
+            <span
+              class="binding-name badge-clickable"
+              :class="{ 'binding-openid': showUserOpenidId === b.id }"
+              title="点击查看个人 openid"
+              @click="toggleUserOpenid(b)"
+            >{{ showUserOpenidId === b.id ? b.openid : personLabel(b) }}</span>
             <span class="muted text-sm">绑定于 {{ b.created_at.slice(0, 10) }}</span>
           </div>
           <button class="btn btn-ghost btn-sm" @click="deleteBindingById(b.id)">解绑</button>
@@ -336,6 +383,33 @@ onBeforeUnmount(stopBindPoll);
       </div>
     </section>
   </section>
+
+  <!-- 修改昵称弹窗 -->
+  <div v-if="nameModalVisible" class="modal-mask" @click.self="nameModalVisible = false">
+    <div class="modal card">
+      <div class="modal-head">
+        <h3>✏️ 修改显示名称</h3>
+      </div>
+      <p class="muted text-sm">
+        机器人拿不到你在群内的名称（群名片），这里填写的名称将用于绑定列表及站点各处展示，建议直接填群内名称。
+      </p>
+      <input
+        v-model="nameInput"
+        class="input mt-2"
+        type="text"
+        maxlength="50"
+        placeholder="请输入显示名称"
+        @keyup.enter="saveDisplayName"
+      />
+      <div v-if="nameErrorMsg" class="alert alert-error mt-2">{{ nameErrorMsg }}</div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="nameSaving" @click="nameModalVisible = false">取消</button>
+        <button class="btn btn-primary btn-sm" type="button" :disabled="nameSaving" @click="saveDisplayName">
+          {{ nameSaving ? "保存中…" : "保存" }}
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- 修改密码弹窗（从「我的」页面进入：校验当前密码或验证码） -->
   <ChangePasswordModal :visible="changePwdVisible" @close="changePwdVisible = false" />
@@ -476,13 +550,29 @@ h4 {
   gap: 10px;
   flex-wrap: wrap;
 }
+.binding-name {
+  font-size: 14px;
+  color: var(--color-primary, #4f46e5);
+}
+.binding-name:hover {
+  text-decoration: underline;
+}
 .binding-openid {
   font-family: var(--font-mono, monospace);
-  font-size: 14px;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--color-text-muted, #888);
+  max-width: 100%;
 }
 .badge-clickable {
   cursor: pointer;
+}
+/* 徽章切换为 openid 时用等宽字体 */
+.badge-mono {
   font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  word-break: break-all;
+  max-width: 100%;
 }
 
 /* ---------- 绑定码弹窗 ---------- */

@@ -146,6 +146,9 @@ export const authClient = {
   me() {
     return request<AuthTokenOut["user"]>({ url: "/auth/me", method: "GET" });
   },
+  updateProfile(data: { nickname: string }) {
+    return request<AuthTokenOut["user"]>({ url: "/auth/me", method: "PATCH", data });
+  },
   logout() {
     return request<SimpleMessageOut>({ url: "/auth/logout", method: "POST" });
   },

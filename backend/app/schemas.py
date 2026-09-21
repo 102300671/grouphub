@@ -145,8 +145,15 @@ class OpenidBindingItem(BaseModel):
     group_id: Optional[str] = None
     group_openid: Optional[str] = None
     group_name: Optional[str] = None
+    # 站点用户名（users.nickname）：列表默认展示名，点击才暴露 openid
+    display_name: Optional[str] = None
     created_at: str
     updated_at: str
+
+
+class ProfileUpdateIn(BaseModel):
+    """用户修改自己的显示名称（站点昵称，建议填群内名称）。"""
+    nickname: str = Field(..., min_length=1, max_length=50)
 
 
 class BindingsListOut(BaseModel):

@@ -81,6 +81,14 @@ export const useUserStore = defineStore("user", () => {
     return authClient.changePassword(data);
   }
 
+  /** 修改显示名称（站点昵称，建议填群内名称），同步更新本地缓存 */
+  async function updateNickname(nickname: string) {
+    const me = await authClient.updateProfile({ nickname });
+    current.value = me;
+    saveCachedUser(me);
+    return me;
+  }
+
   async function logout() {
     try {
       await authClient.logout();
@@ -133,6 +141,7 @@ export const useUserStore = defineStore("user", () => {
     deleteBinding,
     loginByCode,
     changePassword,
+    updateNickname,
     logout,
     ensureMe,
   };

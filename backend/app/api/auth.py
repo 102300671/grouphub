@@ -308,6 +308,7 @@ def list_bindings(
                 group_id=r.group_id,
                 group_openid=r.group_openid,
                 group_name=r.group_name,
+                display_name=user.nickname,
                 created_at=r.created_at.isoformat() if r.created_at else "",
                 updated_at=r.updated_at.isoformat() if r.updated_at else "",
             )
@@ -582,6 +583,26 @@ def logout(_: models.User = Depends(get_current_user)):
 
 @router.get("/me")
 def me(user: models.User = Depends(get_current_user)) -> Dict[str, Any]:
+    return _user_out(user)
+
+
+@router.patch("/me")
+def update_me(
+    payload: schemas.ProfileUpdateIn,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """修改自己的显示名称（站点昵称）。
+
+    QQ 官方机器人拿不到群名片，注册时即建议用户在此手动填写群内名称，
+    绑定列表与站点各处统一用该名称展示。
+    """
+    nickname = payload.nickname.strip()
+    if not nickname:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="显示名称不能为空")
+    user.nickname = nickname[:50]
+    db.commit()
+    db.refresh(user)
     return _user_out(user)
 
 

@@ -62,6 +62,8 @@ export interface OpenidBindingItem {
   group_id?: string | null;
   group_openid?: string | null;
   group_name?: string | null;
+  /** 站点用户名（users.nickname），默认展示名，点击后才显示 openid */
+  display_name?: string | null;
   created_at: string;
   updated_at: string;
 }

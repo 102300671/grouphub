@@ -55,11 +55,12 @@ async def _verify_code(bot: Bot, event: Event, code: str) -> None:
     qq: Optional[str] = None
     openid: Optional[str] = None
     openid_type: Optional[str] = None
-    group_id: Optional[str] = str(getattr(event, "group_id", None) or "") or None
+    group_id: Optional[str] = None
     group_openid: Optional[str] = None
     group_name: Optional[str] = None
     nickname_in_group = None
     if is_onebot_v11(bot):
+        group_id = str(getattr(event, "group_id", None) or "") or None
         uid = event.get_user_id()
         qq = uid if uid else None
         sender = getattr(event, "sender", None)
@@ -72,13 +73,19 @@ async def _verify_code(bot: Bot, event: Event, code: str) -> None:
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug(f"[auth bind] 查群名称失败（OneBot）：{exc}")
-    else:  # QQ 官方：只有 openid，群号用 SYNC_GROUPS 兜底
+    else:  # QQ 官方：只有 openid
         openid = event.get_user_id() or None
         group_openid = str(getattr(event, "group_openid", None) or "") or None
         openid_type = "group" if group_openid else "c2c"
-        group_id = group_id or (SYNC_GROUPS[0] if SYNC_GROUPS else None)
+        # 注意：官方事件的 event.group_id 实际就是 group_openid，不能当真实群号。
+        # 官方拿不到真实群号，仅单群部署时用 SYNC_GROUPS 兜底（私聊不兜底）。
+        if group_openid and SYNC_GROUPS:
+            group_id = SYNC_GROUPS[0]
         if group_openid:
             group_name = await get_group_name_by_openid(bot, group_openid)
+        # 官方 C2C/群事件 author 只下发 openid（文档无 username 字段），
+        # 这里正常恒为 None；保留取值以兼容平台未来扩展。用户显示名以
+        # 站点注册昵称为准（注册时建议手填群内名称，可在「我的」页修改）。
         nickname_in_group = getattr(getattr(event, "author", None), "username", None)
 
     # 群消息 best-effort 撤回验证码，避免被群友看到冒用（仅 OneBot 支持）
