@@ -466,12 +466,18 @@ class AIChatIn(BaseModel):
 # ---- Bot 内部 ----
 
 class AIBuiltinSyncIn(BaseModel):
-    """机器人启动/配置变更时同步内置默认远程配置。"""
+    """机器人启动/配置变更时同步的一套内置远程配置。"""
+    name: Optional[str] = Field("默认配置", max_length=100)
     api_base: str = Field(..., min_length=1, max_length=500)
     api_key: Optional[str] = Field(None, max_length=500)
     model: Optional[str] = Field(None, max_length=200)
     system_prompt: Optional[str] = None
     searxng_url: Optional[str] = Field(None, max_length=500)
+
+
+class AIBuiltinSyncListIn(BaseModel):
+    """机器人批量同步内置配置（.env.prod 可写多套，全部下发）。"""
+    configs: List[AIBuiltinSyncIn]
 
 
 class AIActiveConfigOut(BaseModel):

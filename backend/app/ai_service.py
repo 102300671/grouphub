@@ -22,35 +22,61 @@ def mask_key(key: Optional[str]) -> Optional[str]:
 
 
 def get_builtin_config(db: Session) -> Optional[models.AIConfig]:
-    """内置默认配置（owner_id IS NULL，至多一行）。"""
-    return db.query(models.AIConfig).filter(models.AIConfig.owner_id.is_(None)).first()
-
-
-def get_user_active_config(db: Session, user: models.User) -> Optional[models.AIConfig]:
-    """用户当前选中的自建配置；没有则 None（调用方回退内置默认）。"""
+    """内置主默认配置：name=默认配置 优先，否则 id 最小（向后兼容）。"""
+    row = (
+        db.query(models.AIConfig)
+        .filter(models.AIConfig.owner_id.is_(None), models.AIConfig.name == "默认配置")
+        .first()
+    )
+    if row is not None:
+        return row
     return (
         db.query(models.AIConfig)
-        .filter(models.AIConfig.owner_id == user.id, models.AIConfig.is_active.is_(True))
+        .filter(models.AIConfig.owner_id.is_(None))
+        .order_by(models.AIConfig.id)
         .first()
     )
 
 
+def _active_selection(db: Session, user_id: int) -> Optional[models.AIUserActiveConfig]:
+    return (
+        db.query(models.AIUserActiveConfig)
+        .filter(models.AIUserActiveConfig.user_id == user_id)
+        .first()
+    )
+
+
+def _config_visible_to_user(cfg: Optional[models.AIConfig], user: models.User) -> bool:
+    """内置配置或该用户自己的配置才可见/可用。"""
+    return cfg is not None and (cfg.owner_id is None or cfg.owner_id == user.id)
+
+
 def get_effective_config(
     db: Session, user: models.User
-) -> tuple[int, models.AIConfig]:
-    """返回 (config_id, config)：优先用户选中项，否则内置默认。
-
-    内置默认尚未同步时返回 (0, None)。
-    """
-    active = get_user_active_config(db, user)
-    if active is not None:
-        return active.id, active
+) -> tuple[int, Optional[models.AIConfig]]:
+    """返回 (config_id, config)：用户选中项（含内置配置）> 内置主默认；无则 (0, None)。"""
+    sel = _active_selection(db, user.id)
+    if sel is not None and sel.config_id != 0:
+        cfg = db.query(models.AIConfig).filter(models.AIConfig.id == sel.config_id).first()
+        if _config_visible_to_user(cfg, user):
+            if cfg.owner_id is None and cfg.name == "默认配置":
+                return 0, cfg  # 内置主默认行归一化为 0
+            return cfg.id, cfg
     return 0, get_builtin_config(db)
 
 
-def config_to_out(cfg: models.AIConfig, *, is_builtin: bool = False) -> "dict":
+def config_to_out(
+    cfg: models.AIConfig, *, is_builtin: bool = False, active_id: int = 0
+) -> "dict":
+    """内置配置也输出真实 id（前端可直接点选激活）；active_id=0 表示内置主默认。"""
+    if is_builtin:
+        active = (
+            cfg.name == "默认配置" and active_id == 0
+        ) or (cfg.name != "默认配置" and cfg.id == active_id)
+    else:
+        active = cfg.id == active_id
     return {
-        "id": 0 if is_builtin else cfg.id,
+        "id": cfg.id,
         "name": cfg.name,
         "kind": cfg.kind,
         "api_base": cfg.api_base,
@@ -58,43 +84,83 @@ def config_to_out(cfg: models.AIConfig, *, is_builtin: bool = False) -> "dict":
         "model": cfg.model,
         "system_prompt": cfg.system_prompt,
         "searxng_url": cfg.searxng_url,
-        "is_active": False if is_builtin else cfg.is_active,
+        "is_active": active,
         "is_builtin": is_builtin,
     }
 
 
 def list_configs(db: Session, user: models.User) -> dict:
-    """用户视角的配置列表（内置默认在前）+ 当前生效 id。"""
+    """用户视角的配置列表（全部内置配置在前）+ 当前生效 id。"""
     items: List[dict] = []
-    builtin = get_builtin_config(db)
+    sel = _active_selection(db, user.id)
     active_id = 0
-    if builtin is not None:
-        items.append(config_to_out(builtin, is_builtin=True))
-    rows = (
+    if sel is not None:
+        active_id = sel.config_id
+        if active_id != 0:
+            cfg = db.query(models.AIConfig).filter(models.AIConfig.id == active_id).first()
+            if not _config_visible_to_user(cfg, user):
+                active_id = 0  # 指向的配置已删除/失效 → 回退主默认
+            elif cfg.owner_id is None and cfg.name == "默认配置":
+                active_id = 0  # 内置主默认行归一化
+    builtin_rows = (
+        db.query(models.AIConfig)
+        .filter(models.AIConfig.owner_id.is_(None))
+        .order_by(models.AIConfig.id)
+        .all()
+    )
+    for row in builtin_rows:
+        items.append(config_to_out(row, is_builtin=True, active_id=active_id))
+    own_rows = (
         db.query(models.AIConfig)
         .filter(models.AIConfig.owner_id == user.id)
         .order_by(models.AIConfig.id)
         .all()
     )
-    for row in rows:
-        out = config_to_out(row)
-        if row.is_active:
-            active_id = row.id
-            out["is_active"] = True
-        items.append(out)
+    for row in own_rows:
+        items.append(config_to_out(row, active_id=active_id))
     return {"ok": True, "items": items, "active_id": active_id}
 
 
 def set_active(db: Session, user: models.User, config_id: int) -> None:
-    """切换用户生效配置：0 = 内置默认（清除所有选中标记）。"""
-    rows = db.query(models.AIConfig).filter(models.AIConfig.owner_id == user.id).all()
-    target = None
-    for row in rows:
-        row.is_active = row.id == config_id
-        if row.id == config_id:
-            target = row
-    if config_id != 0 and target is None:
-        raise ValueError("配置不存在")
+    """切换用户生效配置：0 = 内置主默认；>0 指向内置配置或用户自己的配置。"""
+    if config_id != 0:
+        cfg = db.query(models.AIConfig).filter(models.AIConfig.id == config_id).first()
+        if not _config_visible_to_user(cfg, user):
+            raise ValueError("配置不存在")
+        if cfg.owner_id is None and cfg.name == "默认配置":
+            config_id = 0  # 内置主默认行归一化为 0
+    sel = _active_selection(db, user.id)
+    if sel is None:
+        db.add(models.AIUserActiveConfig(user_id=user.id, config_id=config_id))
+    else:
+        sel.config_id = config_id
+
+
+def upsert_builtin_configs(db: Session, configs: List[dict]) -> List[str]:
+    """按 name upsert 内置配置（owner_id IS NULL）；name=默认配置 为主默认。
+
+    返回本次生效的内置配置名列表。
+    """
+    names: List[str] = []
+    for c in configs:
+        name = (c.get("name") or "默认配置").strip() or "默认配置"
+        row = (
+            db.query(models.AIConfig)
+            .filter(models.AIConfig.owner_id.is_(None), models.AIConfig.name == name)
+            .first()
+        )
+        if row is None:
+            row = models.AIConfig(owner_id=None, name=name)
+            db.add(row)
+        row.kind = "remote"
+        row.api_base = (c.get("api_base") or "").rstrip("/") or None
+        row.api_key = (c.get("api_key") or "").strip() or None
+        row.model = (c.get("model") or "").strip() or None
+        row.system_prompt = c.get("system_prompt")
+        row.searxng_url = c.get("searxng_url")
+        names.append(name)
+    db.commit()
+    return names
 
 
 # ------------------ 会话 ------------------

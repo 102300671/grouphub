@@ -84,7 +84,15 @@ def delete_config(
     user: models.User = Depends(get_current_user),
 ):
     cfg = _get_owned_config(db, user, config_id)
-    was_active = cfg.is_active
+    was_active = False
+    sel = (
+        db.query(models.AIUserActiveConfig)
+        .filter(models.AIUserActiveConfig.user_id == user.id)
+        .first()
+    )
+    if sel is not None and sel.config_id == config_id:
+        was_active = True
+        sel.config_id = 0  # 删除当前生效配置 → 回退内置主默认
     db.delete(cfg)
     db.commit()
     return schemas.SimpleMessageOut(

@@ -36,26 +36,29 @@ def _user_by_qq(db: Session, qq: str) -> models.User:
 # =================== 内置默认配置同步 ===================
 
 @router.post("/default", response_model=schemas.SimpleMessageOut)
-def upsert_default(
-    payload: schemas.AIBuiltinSyncIn,
+def upsert_defaults(
+    payload: schemas.AIBuiltinSyncListIn,
     db: Session = Depends(get_db),
     _: BotAuthenticated = Depends(),
 ):
-    """机器人启动 / 管理员改配置后：upsert 内置默认配置（owner_id NULL）。"""
-    cfg = ai_service.get_builtin_config(db)
-    if cfg is None:
-        cfg = models.AIConfig(owner_id=None, name="默认配置")
-        db.add(cfg)
-    cfg.kind = "remote"
-    cfg.api_base = payload.api_base.rstrip("/")
-    cfg.api_key = (payload.api_key or "").strip() or None
-    cfg.model = payload.model
-    cfg.system_prompt = payload.system_prompt
-    cfg.searxng_url = payload.searxng_url
-    db.commit()
-    return schemas.SimpleMessageOut(
-        message="ok", details={"config_id": cfg.id, "model": cfg.model}
-    )
+    """机器人启动 / 管理员改配置后：按 name upsert 多套内置配置（owner_id NULL）。
+
+    .env.prod 可写多套（AI_* 主默认 + AI_BUILTIN_CONFIGS 数组），全部同步为
+    内置配置；name=默认配置 为主默认。所有用户可见，且可被每个用户独立选中。
+    """
+    configs = [
+        {
+            "name": c.name,
+            "api_base": c.api_base,
+            "api_key": c.api_key,
+            "model": c.model,
+            "system_prompt": c.system_prompt,
+            "searxng_url": c.searxng_url,
+        }
+        for c in payload.configs
+    ]
+    names = ai_service.upsert_builtin_configs(db, configs)
+    return schemas.SimpleMessageOut(message="ok", details={"configs": names})
 
 
 # =================== 用户配置解析 ===================
@@ -66,7 +69,7 @@ def get_active(
     db: Session = Depends(get_db),
     _: BotAuthenticated = Depends(),
 ):
-    """返回该 QQ 的生效配置（含真实密钥）：用户选中项 > 内置默认。"""
+    """返回该 QQ 的生效配置（含真实密钥）：用户选中项（含内置配置）> 内置主默认。"""
     user = _user_by_qq(db, qq)
     cfg_id, cfg = ai_service.get_effective_config(db, user)
     if cfg is None:

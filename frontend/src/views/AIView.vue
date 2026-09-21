@@ -60,7 +60,10 @@ const activeConfig = computed<AIConfig | null>(
   () => configs.value.find((c) => c.id === activeId.value) || null,
 );
 const builtinConfig = computed<AIConfig | null>(
-  () => configs.value.find((c) => c.is_builtin) || null,
+  () =>
+    configs.value.find((c) => c.is_builtin && c.name === "默认配置") ||
+    configs.value.find((c) => c.is_builtin) ||
+    null,
 );
 
 // ---------------- 初始化 ----------------

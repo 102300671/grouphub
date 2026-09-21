@@ -202,6 +202,41 @@ def _migrate_ai_groups(engine) -> None:
         db.commit()
 
 
+def _migrate_ai_active(engine) -> None:
+    """把旧版 ai_configs.is_active 选中标记迁到 ai_user_active_configs。
+
+    新架构下「当前生效配置」统一存映射表（含内置配置，每用户至多一行），
+    ai_configs.is_active 不再作为选中依据；此处把存量数据迁移一次并清空旧标记。
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        has_table = conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('ai_configs','ai_user_active_configs')"
+        )).fetchall()
+        names = {r[0] for r in has_table}
+        if not {"ai_configs", "ai_user_active_configs"} <= names:
+            return
+        cols = {r[1] for r in conn.execute(text("PRAGMA table_info(ai_configs)")).fetchall()}
+        if "is_active" not in cols:
+            return
+        rows = conn.execute(text(
+            "SELECT id, owner_id FROM ai_configs WHERE is_active=1 AND owner_id IS NOT NULL"
+        )).fetchall()
+        for cfg_id, owner_id in rows:
+            exists = conn.execute(
+                text("SELECT 1 FROM ai_user_active_configs WHERE user_id=:u"),
+                {"u": owner_id},
+            ).fetchone()
+            if not exists:
+                conn.execute(
+                    text("INSERT INTO ai_user_active_configs (user_id, config_id, created_at, updated_at) "
+                         "VALUES (:u, :c, datetime('now'), datetime('now'))"),
+                    {"u": owner_id, "c": cfg_id},
+                )
+        conn.execute(text("UPDATE ai_configs SET is_active=0"))
+
+
 def init_db() -> None:
     """首次启动时创建所有表。"""
     # 先导入所有模型，确保 ORM 已注册
@@ -211,3 +246,4 @@ def init_db() -> None:
     _migrate_sqlite(engine)
     _migrate_ai_groups(engine)
     _migrate_qq_bindings(engine)
+    _migrate_ai_active(engine)

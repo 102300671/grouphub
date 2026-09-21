@@ -49,3 +49,6 @@ files/
 
 api_md/
 qqbot/log/
+
+# 编辑前的临时备份
+*.bak_*

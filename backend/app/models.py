@@ -357,11 +357,12 @@ class AIFolder(Base):
 class AIConfig(Base):
     """AI 接口配置。
 
-    - owner_id 为 NULL：系统内置默认配置（唯一一行），由 nonebot2 启动时把
-      .env.prod 解析出的远程配置同步过来，所有用户可见但不可改；
+    - owner_id 为 NULL：系统内置配置，由 nonebot2 启动时把 .env.prod 解析出的
+      一套或多套远程配置同步过来（name="默认配置" 为主默认），所有用户可见但不可改；
     - owner_id 指向用户：用户自建配置（BYOK），kind=remote 走后端代理，
       kind=local 由浏览器直连用户本地模型端点（用户本地网络）。
-    is_active：该用户当前选中的配置（每个用户至多一行）；没有选中项时生效内置默认。
+    is_active：仅用于用户自己配置的选中标记（历史兼容）；
+    当前生效项统一记录在 ai_user_active_configs（含内置配置，每用户至多一行）。
     """
     __tablename__ = "ai_configs"
 
@@ -380,6 +381,24 @@ class AIConfig(Base):
 
     owner = relationship("User", lazy="selectin")
 
+
+
+
+class AIUserActiveConfig(Base):
+    """用户当前选中的 AI 配置（含内置配置行），每用户至多一行。
+
+    config_id=0 表示内置主默认（name=默认配置）；>0 指向 ai_configs.id
+    （可以是内置配置行，或该用户自己的配置行）。
+    """
+    __tablename__ = "ai_user_active_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    config_id = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, default=_now, nullable=False)
+    updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
+
+    user = relationship("User", lazy="selectin")
 
 class AIConversation(Base):
     """AI 会话：网页端会话（source=web）或群内会话（source=group，按用户+群独立）。

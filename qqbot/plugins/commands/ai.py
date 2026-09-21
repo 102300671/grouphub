@@ -69,23 +69,62 @@ _TIMEOUT = float(os.getenv("AI_TIMEOUT", "120") or "120")
 
 # ------------------ 启动时把默认远程配置同步到后端（前端 AI 页据此展示） ------------------
 
-async def _sync_builtin_default() -> None:
+_BUILTIN_CONFIGS_ENV = "AI_BUILTIN_CONFIGS"
+
+
+def _parse_builtin_configs() -> List[Dict[str, str]]:
+    """解析 .env.prod 的内置配置：主默认（AI_* 变量，name=默认配置）+ AI_BUILTIN_CONFIGS。
+
+    AI_BUILTIN_CONFIGS 为 JSON 数组，每项 {name, api_base, api_key, model,
+    system_prompt, searxng_url}；解析失败仅告警并忽略额外配置。
+    """
     cfg = get_config()
+    items: List[Dict[str, str]] = [
+        {
+            "name": "默认配置",
+            "api_base": cfg["api_base"],
+            "api_key": cfg["api_key"],
+            "model": cfg["model"],
+            "system_prompt": cfg["system_prompt"],
+            "searxng_url": cfg["searxng_url"],
+        }
+    ]
+    raw = os.getenv(_BUILTIN_CONFIGS_ENV, "").strip()
+    if not raw:
+        return items
     try:
-        await aisync.push_default(
+        extra = json.loads(raw)
+    except (ValueError, TypeError) as exc:
+        logger.warning(f"[ai] AI_BUILTIN_CONFIGS 解析失败（忽略额外配置）：{exc}")
+        return items
+    if not isinstance(extra, list):
+        logger.warning("[ai] AI_BUILTIN_CONFIGS 必须是 JSON 数组，已忽略")
+        return items
+    for idx, entry in enumerate(extra):
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip() or f"内置配置{idx + 1}"
+        items.append(
             {
-                "api_base": cfg["api_base"],
-                "api_key": cfg["api_key"],
-                "model": cfg["model"],
-                "system_prompt": cfg["system_prompt"],
-                "searxng_url": cfg["searxng_url"],
+                "name": name,
+                "api_base": str(entry.get("api_base") or "").strip(),
+                "api_key": str(entry.get("api_key") or "").strip(),
+                "model": str(entry.get("model") or "").strip(),
+                "system_prompt": str(entry.get("system_prompt") or "").strip() or None,
+                "searxng_url": str(entry.get("searxng_url") or "").strip() or None,
             }
         )
+    return items
+
+
+async def _sync_builtin_configs() -> None:
+    try:
+        await aisync.push_defaults(_parse_builtin_configs())
     except Exception as exc:  # noqa: BLE001 后端离线不阻断启动
-        logger.warning(f"[ai] 启动同步默认配置失败（问答仍可用本地默认）：{exc}")
+        logger.warning(f"[ai] 启动同步内置配置失败（问答仍可用本地默认）：{exc}")
 
 
-get_driver().on_startup(_sync_builtin_default)
+get_driver().on_startup(_sync_builtin_configs)
 
 
 def _read_file_config() -> Dict[str, str]:
@@ -943,20 +982,11 @@ async def config(bot: Bot, event: Event, result: ParseResult) -> None:
             await bot.send(event, f"⚠️ 配置保存失败：{exc}")
             return
         _HISTORY.clear()
-        # 重新同步内置默认到后端（前端 AI 页跟着更新）
+        # 重新同步内置配置到后端（前端 AI 页跟着更新）
         try:
-            fresh = get_config()
-            await aisync.push_default(
-                {
-                    "api_base": fresh["api_base"],
-                    "api_key": fresh["api_key"],
-                    "model": fresh["model"],
-                    "system_prompt": fresh["system_prompt"],
-                    "searxng_url": fresh["searxng_url"],
-                }
-            )
+            await aisync.push_defaults(_parse_builtin_configs())
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[ai] 默认配置同步后端失败：{exc}")
+            logger.warning(f"[ai] 内置配置同步后端失败：{exc}")
 
     cfg = get_config()
     lines = [
@@ -1037,15 +1067,14 @@ async def list_mine(bot: Bot, event: Event, result: ParseResult) -> None:
         await bot.send(event, f"⚠️ 配置查询失败：{exc}")
         return
 
-    active_id = data.get("active_id", 0)
     lines = ["⚙️ 可用 AI 配置："]
     for item in data.get("items", []):
         tags = []
         if item.get("is_builtin"):
-            tags.append("内置默认·免费")
+            tags.append("内置")
         if item.get("kind") == "local":
             tags.append("本地·仅网页端")
-        if item.get("id") == active_id:
+        if item.get("is_active"):
             tags.append("✓ 当前使用")
         tag = f" [{ '，'.join(tags) }]" if tags else ""
         model = item.get("model") or "（未设模型）"

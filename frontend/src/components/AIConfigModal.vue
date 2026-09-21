@@ -208,8 +208,14 @@ async function testLocal() {
   }
 }
 
-function builtin(): AIConfig | undefined {
-  return configs.value.find((c) => c.is_builtin);
+function builtinDefault(): AIConfig | undefined {
+  return (
+    configs.value.find((c) => c.is_builtin && c.name === "默认配置") ||
+    configs.value.find((c) => c.is_builtin)
+  );
+}
+function builtinConfigs(): AIConfig[] {
+  return configs.value.filter((c) => c.is_builtin);
 }
 function userConfigs(): AIConfig[] {
   return configs.value.filter((c) => !c.is_builtin);
@@ -227,39 +233,43 @@ function userConfigs(): AIConfig[] {
       <!-- ========== 列表模式 ========== -->
       <div v-if="!editing" class="modal-body">
         <div class="hint-banner">
-          💡 默认配置使用 <b>agnes-3.0-flash</b>，免费但能力有限，复杂问题表现一般。
-          需要更好的体验可点「新建远程配置」，填入你自己的 API Key（OpenAI / DeepSeek /
+          💡 内置配置来自机器人 <b>.env.prod</b>（可多套，点选即可切换）；主默认
+          <b>{{ builtinDefault()?.model || "默认模型" }}</b> 免费但能力有限。
+          需要更好体验可「新建远程配置」，填入你自己的 API Key（OpenAI / DeepSeek /
           Kimi / GLM / 硅基流动 等任意 OpenAI 兼容接口）。
         </div>
 
-        <!-- 内置默认 -->
+        <!-- 内置配置（.env.prod 同步；灰色只读，可点选切换） -->
         <div
+          v-for="cfg in builtinConfigs()"
+          :key="cfg.id"
           class="cfg-card builtin-card"
-          :class="{ active: activeId === 0 }"
+          :class="{ active: cfg.name === '默认配置' ? activeId === 0 : activeId === cfg.id }"
         >
           <label class="cfg-main">
             <input
               type="radio"
               name="ai-cfg"
-              :checked="activeId === 0"
-              @change="activate(null)"
+              :checked="cfg.name === '默认配置' ? activeId === 0 : activeId === cfg.id"
+              @change="activate(cfg)"
             />
             <div class="cfg-info">
               <div class="cfg-name">
-                默认配置
-                <span class="tag tag-builtin">内置·免费</span>
+                {{ cfg.name }}
+                <span class="tag tag-builtin">内置</span>
                 <span class="tag tag-remote">远程</span>
+                <span v-if="cfg.name === '默认配置' ? activeId === 0 : activeId === cfg.id" class="tag tag-active">✓ 使用中</span>
               </div>
               <!-- 灰色只读：跟随机器人 .env.prod -->
               <div class="builtin-fields">
                 <input
                   class="grey-input"
-                  :value="builtin()?.api_base || '（等待机器人启动同步…）'"
+                  :value="cfg.api_base || '（等待机器人启动同步…）'"
                   disabled
                 />
                 <input
                   class="grey-input"
-                  :value="builtin()?.model || '—'"
+                  :value="cfg.model || '—'"
                   disabled
                 />
               </div>

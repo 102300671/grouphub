@@ -1,7 +1,7 @@
 """机器人 ↔ 后端 AI 联动客户端。
 
 封装 /bot/ai/* 内部接口，承载「前端与机器人 AI 配置互通、群会话同步到前端」：
-  - push_default()：把机器人 .env.prod 解析出的默认远程配置同步给后端；
+  - push_defaults()：把机器人 .env.prod 解析出的内置配置（可多套）批量同步给后端；
   - get_active_config(qq)：取该用户当前生效配置（前端自建的也在这里生效）；
   - list_configs(qq) / activate(qq, config_id)：群内查看/切换配置；
   - group_conversation()：获取/创建群会话并拿回历史消息；
@@ -18,12 +18,12 @@ from nonebot import logger
 from .client import backend_client
 
 
-async def push_default(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """同步内置默认远程配置；返回后端 details。"""
-    resp = await backend_client.post("/bot/ai/default", json=cfg)
+async def push_defaults(configs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """批量同步内置配置（.env.prod 主默认 + AI_BUILTIN_CONFIGS 多套）；返回后端 details。"""
+    resp = await backend_client.post("/bot/ai/default", json={"configs": configs})
     resp.raise_for_status()
     data = resp.json()
-    logger.info(f"[aisync] 默认配置已同步到后端：{data.get('details')}")
+    logger.info(f"[aisync] 内置配置已同步到后端：{data.get('details')}")
     return data
 
 
@@ -144,7 +144,7 @@ async def reset_conversation(qq: str, group_id: str) -> bool:
 
 
 __all__ = [
-    "push_default",
+    "push_defaults",
     "get_active_config",
     "list_configs",
     "activate",
