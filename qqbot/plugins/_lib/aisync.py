@@ -114,9 +114,12 @@ async def move_conversation(
 
 
 async def append_messages(
-    conversation_id: int, qq: str, messages: List[Dict[str, str]]
+    conversation_id: int, qq: str, messages: List[Dict[str, object]]
 ) -> None:
-    """批量追加消息（一轮问答 = user + assistant 两条）。"""
+    """批量追加消息（一轮问答 = user + assistant 两条）。
+
+    assistant 消息可携带 agent_steps（思维链/工具链轨迹），原样转发给后端。
+    """
     resp = await backend_client.post(
         f"/bot/ai/conversation/{int(conversation_id)}/messages",
         json={"qq": qq, "messages": messages},

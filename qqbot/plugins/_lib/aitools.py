@@ -384,7 +384,8 @@ def _package_tools_manual(pkg_name: str) -> str:
 
 # ------------------ agent 循环 ------------------
 
-ChatFn = Callable[[List[Dict[str, str]]], Awaitable[str]]
+# chat(messages, on_reasoning=回调) -> 模型回复文本；on_reasoning 接收思维链分片
+ChatFn = Callable[..., Awaitable[str]]
 EventFn = Callable[[str, Dict[str, object]], Awaitable[None]]
 
 
@@ -444,27 +445,45 @@ async def run_agent_turn(
 ) -> str:
     """跑一轮「模型回复 → 解析工具调用 → 执行回灌 → 再回复」的循环。
 
-    - chat: 发送 messages 返回模型回复文本的协程（由调用方绑定模型参数）；
+    - chat: 签名 chat(messages, on_reasoning=回调)，返回模型回复文本；
+      on_reasoning(text) 接收 reasoning_content 思维链分片（QQ 不展示，仅收集落库）；
     - messages 会被原地追加 assistant/tool_result 消息；
-    - on_event(event, payload)："before_chat" {"step": int}、
-      "tool_call" ToolCall 的 dict、"tool_error" {"name","error"}；
+    - on_event(event, payload) 推送与网页端 SSE 同构的轨迹事件，调用方收集后
+      随 assistant 消息同步给后端，前端可完整还原思维链/工具链：
+        "round"        {"index": int}
+        "reasoning"    {"text": str}
+        "tool_call"    {"id","kind":"activate"|"tool","name","args","raw"}
+        "tool_result"  {"id","name","ok","summary","content"}
     - 返回剥离了工具块的最终回复文本。
     """
+
     async def emit(event: str, payload: Dict[str, object]) -> None:
         if on_event is not None:
             await on_event(event, payload)
 
+    async def _on_reasoning(text: str) -> None:
+        await emit("reasoning", {"text": text})
+
+    def _result_payload(result: str) -> Dict[str, object]:
+        # 与后端 _sse_response 的预览规则保持一致
+        return {
+            "ok": not result.startswith("错误："),
+            "summary": result.replace("\n", " ").strip()[:120],
+            "content": result,
+        }
+
     last_reply = ""
     tool_steps = 0
     total_rounds = 0
+    call_seq = 0
     max_rounds = max_tool_steps * 3 + 3  # 安全阀：含 activate 轮的总上限
 
     while total_rounds < max_rounds:
         total_rounds += 1
         if total_rounds > 1:
             logger.info(f"结果已回灌，AI 正在处理（第 {total_rounds} 轮模型请求）…")
-        await emit("before_chat", {"step": tool_steps})
-        last_reply = await chat(messages)
+        await emit("round", {"index": total_rounds - 1})
+        last_reply = await chat(messages, on_reasoning=_on_reasoning)
         calls = parse_tool_calls(last_reply)
         if not calls:
             if total_rounds > 1:
@@ -480,7 +499,21 @@ async def run_agent_turn(
         # 先处理 activate（不计 tool_steps）
         for ac in activates:
             logger.info(f"AI 请求激活包：{ac.args.get('name', '')}")
+            call_seq += 1
+            call_obj: Dict[str, object] = {
+                "id": call_seq,
+                "kind": "activate",
+                "name": "pkg:activate",
+                "args": dict(ac.args),
+                "raw": ac.raw,
+            }
+            await emit("tool_call", call_obj)
             result = _handle_activate(ac)
+            call_obj["result"] = _result_payload(result)
+            await emit(
+                "tool_result",
+                {"id": call_seq, "name": "pkg:activate", **call_obj["result"]},
+            )
             messages.append(
                 {"role": "user", "content": f'{RESULT_OPEN} name="pkg:activate">\n{result}\n</tool_result>'}
             )
@@ -496,13 +529,21 @@ async def run_agent_turn(
                 + "；".join(f"{c.name} 参数={dict(c.args)}" for c in tool_calls)
             )
             for call in tool_calls:
-                await emit(
-                    "tool_call",
-                    {"name": call.name, "args": dict(call.args), "raw": call.raw},
-                )
+                call_seq += 1
+                call_obj = {
+                    "id": call_seq,
+                    "kind": "tool",
+                    "name": call.name,
+                    "args": dict(call.args),
+                    "raw": call.raw,
+                }
+                await emit("tool_call", call_obj)
                 result = await _safe_execute(call)
-                if result.startswith("错误："):
-                    await emit("tool_error", {"name": call.name, "error": result})
+                call_obj["result"] = _result_payload(result)
+                await emit(
+                    "tool_result",
+                    {"id": call_seq, "name": call.name, **call_obj["result"]},
+                )
                 messages.append(
                     {
                         "role": "user",

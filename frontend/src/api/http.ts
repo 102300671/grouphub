@@ -233,12 +233,19 @@ export const aiClient = {
       method: "DELETE",
     });
   },
-  /** 本地配置浏览器直连时：单独持久化一条消息 */
-  appendMessage(id: number, role: "user" | "assistant", content: string) {
+  /** 本地配置浏览器直连时：单独持久化一条消息（assistant 可带思维链/工具链轨迹） */
+  appendMessage(
+    id: number,
+    role: "user" | "assistant",
+    content: string,
+    agentSteps?: unknown,
+  ) {
     return request<SimpleMessageOut>({
       url: `/ai/conversations/${id}/messages`,
       method: "POST",
-      data: { role, content },
+      data: agentSteps && role === "assistant"
+        ? { role, content, agent_steps: agentSteps }
+        : { role, content },
     });
   },
   /* ---------- 会话层级（大组 / 组） ---------- */
@@ -293,14 +300,30 @@ export const aiClient = {
  *   data: {"type":"delta","text":"..."} / {"type":"done"} / {"type":"error","message":"..."}
  * 返回 Promise（done 结束 / error 抛出）。
  */
+export type ToolCallKind = "activate" | "tool";
+
 export async function streamRemoteChat(
   conversationId: number,
   content: string,
   handlers: {
     onDelta: (text: string) => void;
     onReasoning?: (text: string) => void;
-    onToolCall?: (name: string, args: Record<string, unknown>) => void;
-    onToolResult?: (name: string, summary: string) => void;
+    /** 一轮模型请求开始：思考与该轮内的调用归入同一个步骤卡片 */
+    onRound?: (index: number) => void;
+    onToolCall?: (
+      id: number,
+      kind: ToolCallKind,
+      name: string,
+      args: Record<string, unknown>,
+      raw: string,
+    ) => void;
+    onToolResult?: (
+      id: number,
+      name: string,
+      ok: boolean,
+      summary: string,
+      content: string,
+    ) => void;
   },
 ): Promise<void> {
   const token = getToken();
@@ -333,10 +356,23 @@ export async function streamRemoteChat(
         const evt = JSON.parse(payload);
         if (evt.type === "delta") handlers.onDelta(evt.text || "");
         else if (evt.type === "reasoning") handlers.onReasoning?.(evt.text || "");
+        else if (evt.type === "round") handlers.onRound?.(Number(evt.index) || 0);
         else if (evt.type === "tool_call")
-          handlers.onToolCall?.(evt.name || "", evt.args || {});
+          handlers.onToolCall?.(
+            Number(evt.id),
+            (evt.kind as ToolCallKind) || "tool",
+            evt.name || "",
+            evt.args || {},
+            evt.raw || "",
+          );
         else if (evt.type === "tool_result")
-          handlers.onToolResult?.(evt.name || "", evt.summary || "");
+          handlers.onToolResult?.(
+            Number(evt.id),
+            evt.name || "",
+            evt.ok !== false,
+            evt.summary || "",
+            evt.content || evt.summary || "",
+          );
         else if (evt.type === "error") throw new Error(evt.message || "上游错误");
       } catch (e) {
         if (e instanceof SyntaxError) continue;

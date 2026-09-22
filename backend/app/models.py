@@ -444,6 +444,9 @@ class AIMessage(Base):
     conversation_id = Column(Integer, ForeignKey("ai_conversations.id"), nullable=False, index=True)
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
+    # assistant 消息的思维链/工具链轨迹 JSON（结构见 ai_service.normalize_agent_steps）；
+    # user 消息恒为 NULL。前端历史会话据此还原步骤卡片。
+    agent_steps = Column(Text, nullable=True)
     created_at = Column(DateTime, default=_now, nullable=False)
 
 

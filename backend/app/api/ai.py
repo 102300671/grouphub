@@ -6,16 +6,20 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
-from typing import AsyncGenerator, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Awaitable, Callable, AsyncGenerator, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import ai_service, models, schemas
+from app.api.bot.works import _hot_scores
+from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.models import utcnow
 from app.security import get_current_user
@@ -51,16 +55,9 @@ _TRAILING_CLOSE_RE = re.compile(r"\s*<\s*/\s*[a-z_]+\s*>\s*$", re.IGNORECASE)
 _BARE_CLOSING_RE = re.compile(r"^<\s*/\s*[a-z_]+\s*>$", re.IGNORECASE)
 _BARE_OPENING_RE = re.compile(r"^<\s*[a-z_]+\s*>$", re.IGNORECASE)
 
-_TOOL_CATALOG = (
-    "你有联网搜索工具可用。当问题涉及最新资讯、实时数据、近期版本/数值、攻略资料"
-    "或你不确定的事实，且你已有的知识不足以可靠回答时，严格按如下协议调用搜索，"
-    "一次只输出一个块，块外不要写解释，不要用代码围栏，也不要输出本协议以外的任何 XML 标签：\n\n"
-    "<tool_call>\nweb:search\nquery=搜索关键词\n</tool_call>\n\n"
-    "要求：开标签必须是 <tool_call>，闭标签必须是 </tool_call>，二者都不能写错或省略；"
-    "第二行固定为 web:search；query 必填，精炼，不要包含客套话。"
-    "系统返回 <tool_result> 后，参考其中带 [序号] 的资料回答并标注引用；"
-    "若搜索无结果或资料不足，如实说明，不要编造。"
-)
+# 文本协议工具采用与 qqbot 一致的「两阶段」包机制：system 只给包目录，
+# 模型先 pkg:activate 激活包（系统回该包工具手册），再调用具体工具。
+# 目录/手册按本次请求可用的包动态生成（见 _build_tool_table）。
 
 
 def _iter_tool_blocks(text: str):
@@ -211,6 +208,315 @@ async def _web_search_backend(
         content = str(item.get("content") or "").strip()
         blocks.append(f"[{i}] {title}\n{url_}\n{content}".rstrip())
     return "\n\n".join(blocks)
+
+
+# =================== 工具包（两阶段协议，与 qqbot 对齐） ===================
+
+@dataclass(frozen=True)
+class _ToolSpec:
+    """包内一个工具的说明（手册用）；执行器在 _build_tool_table 中绑定。"""
+
+    namespace: str
+    name: str
+    description: str
+    params: Dict[str, str]
+
+    @property
+    def fullname(self) -> str:
+        return f"{self.namespace}:{self.name}"
+
+
+@dataclass(frozen=True)
+class _PackageSpec:
+    name: str
+    description: str
+
+
+_TOOL_OPEN_LITERAL = "<tool_call>"
+_TOOL_CLOSE_LITERAL = "<" + "/tool_call>"
+
+
+def _package_catalog(packages: List[_PackageSpec]) -> str:
+    """生成模型侧包目录（仅包名+简介），拼进 system prompt。"""
+    blocks: List[str] = [
+        "# 工具调用协议",
+        "当你仅凭自身知识无法可靠回答时（最新资讯、实时数据、近期版本/数值、站内作品、"
+        "你不确定的事实），必须先调用工具获取信息，禁止编造；闲聊、观点、创作、常识问题不要调用。",
+        "",
+        "## 两阶段调用",
+        "1. 先激活包：输出 pkg:activate 块，系统返回该包内的工具列表；",
+        "2. 再调用工具：按返回的工具列表选择具体工具，输出 包名:工具名 块。",
+        "",
+        "调用块格式（块外不要写解释，不要用代码围栏包裹；一次只输出一个块）：",
+        _TOOL_OPEN_LITERAL,
+        "包名:工具名   （激活包时第二行固定写 pkg:activate）",
+        "参数名=参数值",
+        _TOOL_CLOSE_LITERAL,
+        '系统执行后以 <tool_result name="..."> 回传结果；拿到结果后，'
+        "要么直接输出最终回答（不含工具块），要么继续调用。",
+        "",
+        "判定规则（按顺序）：",
+        "1. 用户明确要求搜索/联网/查一下/最新/最近，或问题涉及新闻、近期事件、"
+        "软件/游戏新版本与改动、实时数据 → 立即激活 web 包并调用，不要反问；",
+        "2. 用户问站内有没有某作品、求推荐、群友在看什么 → 激活 site 包检索；",
+        "3. 用户让你帮忙上传/安利某作品 → 先 web:search 查作者与简介，"
+        "有多个同名候选时先让用户选定，再调 site:add（站内同名会自动驳回）；",
+        "4. 闲聊、观点、写作、写代码、常识 → 不要调用，直接回答。",
+        "",
+        "示例（用户消息：泰拉瑞亚最新版本更新了什么）：",
+        "第一步——激活包：",
+        _TOOL_OPEN_LITERAL,
+        "pkg:activate",
+        "name=web",
+        _TOOL_CLOSE_LITERAL,
+        "第二步——系统返回 web 包工具后，调用搜索：",
+        _TOOL_OPEN_LITERAL,
+        "web:search",
+        "query=泰拉瑞亚 最新版本 更新内容",
+        _TOOL_CLOSE_LITERAL,
+        "第三步——系统返回搜索结果后，输出最终回答（引用资料按 [序号] 标注）。",
+        "",
+        "可用工具包：",
+    ]
+    for pkg in packages:
+        blocks.append(f"- {pkg.name}：{pkg.description}")
+    blocks.append("")
+    blocks.append("最终回答中不要出现工具块。")
+    return "\n".join(blocks)
+
+
+def _package_manual(pkg_name: str, specs: List[_ToolSpec]) -> str:
+    """激活包后回给模型的包内工具详情。"""
+    lines = [f"包 [{pkg_name}] 已激活，可用工具："]
+    for tool in specs:
+        lines.append(f"## {tool.fullname}")
+        lines.append(f"说明：{tool.description}")
+        if tool.params:
+            lines.append("参数：")
+            for pname, pdesc in tool.params.items():
+                lines.append(f"  {pname}={pdesc}")
+        lines.append("")
+    lines.append("现在选择一个工具调用；不需要时直接回答用户。")
+    return "\n".join(lines)
+
+
+# ------------------ site 包：站内作品库（直接查库，以当前登录用户身份） ------------------
+
+_VALID_WORK_TYPES = {"novel", "anime", "movie", "gallery", "fanwork", "other"}
+
+
+def _fmt_works_for_ai(
+    works: List[models.Work], scores: Optional[Dict[int, int]] = None
+) -> str:
+    """给模型看的作品列表：标题/作者/类型/简介/相对链接。"""
+    blocks = []
+    for i, w in enumerate(works, 1):
+        head = f"[{i}] {w.title}"
+        if w.author:
+            head += f"（作者：{w.author}）"
+        if scores and scores.get(w.id):
+            head += f" · 热度 {scores[w.id]}"
+        parts = [head]
+        if w.type:
+            parts.append(f"类型：{w.type}")
+        if w.summary:
+            parts.append(f"简介：{w.summary}")
+        parts.append(f"链接：/works/{w.id}")
+        blocks.append("\n    ".join(parts))
+    if not blocks:
+        return ""
+    return (
+        "以下是站内作品库的相关作品（请优先依据这些信息回答用户；"
+        "回答末尾可附上作品链接供用户查看）：\n" + "\n".join(blocks)
+    )
+
+
+def _clamp_int(raw: str, default: int, low: int, high: int) -> int:
+    try:
+        return max(low, min(high, int((raw or "").strip() or default)))
+    except ValueError:
+        return default
+
+
+def _site_hot_sync(args: Dict[str, str], user_id: int) -> str:
+    limit = _clamp_int(args.get("limit", ""), 5, 1, 20)
+    with SessionLocal() as db:
+        works = (
+            db.query(models.Work)
+            .filter(models.Work.status == models.WorkStatus.PUBLISHED)
+            .all()
+        )
+        scores = _hot_scores(db, [w.id for w in works])
+        ordered = sorted(works, key=lambda w: scores.get(w.id, 0), reverse=True)[:limit]
+        return _fmt_works_for_ai(ordered, scores) or "站内当前没有热门作品。"
+
+
+def _site_search_sync(args: Dict[str, str], user_id: int) -> str:
+    keyword = (args.get("keyword") or args.get("query") or "").strip()
+    if not keyword:
+        return "错误：缺少必填参数 keyword（搜索关键词）。"
+    limit = _clamp_int(args.get("limit", ""), 10, 1, 50)
+    with SessionLocal() as db:
+        q = db.query(models.Work).filter(
+            models.Work.status == models.WorkStatus.PUBLISHED
+        )
+        like = f"%{keyword}%"
+        q = q.filter(models.Work.title.like(like) | models.Work.author.like(like))
+        wtype = (args.get("type") or "").strip().lower()
+        if wtype in _VALID_WORK_TYPES:
+            q = q.filter(models.Work.type == wtype)
+        works = q.order_by(models.Work.updated_at.desc()).limit(limit).all()
+        return (
+            _fmt_works_for_ai(works)
+            or f"站内没有匹配「{keyword}」的作品。可以建议用户在站点上传这部作品。"
+        )
+
+
+def _site_add_sync(args: Dict[str, str], user_id: int) -> str:
+    """以当前登录用户身份上传作品（同名已发布作品自动驳回，不重复入库）。"""
+    title = (args.get("title") or "").strip()
+    if not title:
+        return "错误：缺少必填参数 title（作品标题）。"
+    with SessionLocal() as db:
+        user = db.get(models.User, user_id)
+        if user is None:
+            return "错误：登录态已失效，请刷新页面后重试。"
+        dup = (
+            db.query(models.Work)
+            .filter(
+                models.Work.title == title,
+                models.Work.status == models.WorkStatus.PUBLISHED,
+            )
+            .first()
+        )
+        if dup is not None:
+            return (
+                f"站内已存在同名作品《{dup.title}》（ID={dup.id}），未重复入库。"
+                f"请告知用户可到 /works/{dup.id} 查看并标记支持。"
+            )
+        wtype = (args.get("type") or "").strip().lower()
+        if wtype not in _VALID_WORK_TYPES:
+            wtype = models.WorkType.OTHER
+        tags = [
+            t.strip()
+            for t in (args.get("tags") or "").split(",")
+            if t.strip()
+        ]
+        work = models.Work(
+            title=title,
+            author=(args.get("author") or "").strip() or None,
+            type=wtype,
+            summary=(args.get("summary") or "").strip() or None,
+            uploader_id=user.id,
+            tags_json=tags,
+            status=(
+                models.WorkStatus.PENDING
+                if get_settings().works_require_review
+                else models.WorkStatus.PUBLISHED
+            ),
+        )
+        db.add(work)
+        db.flush()
+        for chunk in (args.get("links") or "").split(","):
+            if "=" not in chunk:
+                continue
+            site_name, url = chunk.split("=", 1)
+            site_name, url = site_name.strip(), url.strip()
+            if url:
+                db.add(
+                    models.WorkLink(work_id=work.id, site_name=site_name or None, url=url)
+                )
+        db.commit()
+        db.refresh(work)
+        pending = work.status == models.WorkStatus.PENDING
+        parts = [
+            f"已提交（待管理员审核）：《{work.title}》（ID={work.id}）"
+            if pending
+            else f"已上传：《{work.title}》（ID={work.id}）"
+        ]
+        if work.author:
+            parts.append(f"作者：{work.author}")
+        if work.type:
+            parts.append(f"类型：{work.type}")
+        if not pending:
+            parts.append(f"详情：/works/{work.id}")
+        return " · ".join(parts)
+
+
+def _build_tool_table(
+    user_id: int, searxng_url: str
+) -> tuple[List[_PackageSpec], List[_ToolSpec], Dict[str, Callable[[Dict[str, str]], Awaitable[str]]]]:
+    """按当前请求上下文构造可用包、工具说明与执行器映射。"""
+    packages: List[_PackageSpec] = []
+    specs: List[_ToolSpec] = []
+    handlers: Dict[str, Callable[[Dict[str, str]], Awaitable[str]]] = {}
+
+    if searxng_url:
+        packages.append(
+            _PackageSpec(
+                name="web",
+                description="联网搜索：最新资讯、实时数据、近期版本/数值、你不确定的事实。",
+            )
+        )
+        specs.append(
+            _ToolSpec(
+                namespace="web",
+                name="search",
+                description="联网搜索公开网页，返回带序号的参考资料。",
+                params={"query": "搜索关键词（必填，精炼，不要客套话）"},
+            )
+        )
+        handlers["web:search"] = lambda args: _web_search_backend(
+            str(args.get("query") or ""), searxng_url
+        )
+
+    packages.append(
+        _PackageSpec(
+            name="site",
+            description="站内作品库：检索/上传本站已收录的小说、番剧、电影、图集、同人等作品。"
+            "用户问「站点有没有 xxx」「推荐 xxx」「群友在看什么」时检索；"
+            "用户让 AI「帮忙上传/安利某作品」时用 site:add。",
+        )
+    )
+    specs += [
+        _ToolSpec(
+            namespace="site",
+            name="hot",
+            description="获取站内热门作品榜。用户问群友在看什么/推荐什么/热门作品时调用。",
+            params={"limit": "返回条数（可选，默认 5，最大 20）"},
+        ),
+        _ToolSpec(
+            namespace="site",
+            name="search",
+            description="按关键词搜索站内作品库。用户问站点有没有某作品/某作者/某类型时调用。",
+            params={
+                "keyword": "搜索关键词（必填，作品名/作者名等）",
+                "type": "作品类型（可选）：novel/anime/movie/gallery/fanwork/other",
+                "limit": "返回条数（可选，默认 10，最大 50）",
+            },
+        ),
+        _ToolSpec(
+            namespace="site",
+            name="add",
+            description=(
+                "把作品上传到站内作品库，上传者自动记为当前用户。"
+                "调用前请先用 web:search 查到作者、简介等元信息；多个同名候选先让用户选定；"
+                "站内已有同名已发布作品时本工具会驳回，不要重复提交。"
+            ),
+            params={
+                "title": "作品标题（必填）",
+                "author": "作者（可选，建议先 web:search 查到再填）",
+                "type": "类型（可选）：novel/anime/movie/gallery/fanwork/other",
+                "summary": "一句话简介（可选）",
+                "tags": "标签（可选，逗号分隔，如：百合,连载中）",
+                "links": '外链（可选，格式 "站点名=URL,站点名=URL"）',
+            },
+        ),
+    ]
+    handlers["site:hot"] = lambda args: asyncio.to_thread(_site_hot_sync, args, user_id)
+    handlers["site:search"] = lambda args: asyncio.to_thread(_site_search_sync, args, user_id)
+    handlers["site:add"] = lambda args: asyncio.to_thread(_site_add_sync, args, user_id)
+    return packages, specs, handlers
 
 
 # =================== 配置 ===================
@@ -480,6 +786,7 @@ def get_conversation(
             "id": m.id,
             "role": m.role,
             "content": m.content,
+            "agent_steps": ai_service.load_agent_steps(m.agent_steps),
             "created_at": m.created_at,
         }
         for m in conv.messages
@@ -518,7 +825,12 @@ def append_message(
         raise HTTPException(status_code=404, detail="会话不存在")
     db.add(
         models.AIMessage(
-            conversation_id=conv.id, role=payload.role, content=payload.content
+            conversation_id=conv.id,
+            role=payload.role,
+            content=payload.content,
+            agent_steps=ai_service.dump_agent_steps(payload.agent_steps)
+            if payload.role == "assistant"
+            else None,
         )
     )
     _maybe_title(conv, payload)
@@ -566,6 +878,7 @@ def patch_conversation(
             "id": m.id,
             "role": m.role,
             "content": m.content,
+            "agent_steps": ai_service.load_agent_steps(m.agent_steps),
             "created_at": m.created_at,
         }
         for m in conv.messages
@@ -653,7 +966,7 @@ def chat(
     request_messages.extend(history)
 
     return_stream = _sse_response(
-        url, key, model, request_messages, conv.id,
+        url, key, model, request_messages, conv.id, user,
         question=payload.content, cfg_row=cfg_row,
     )
     from fastapi.responses import StreamingResponse
@@ -707,42 +1020,60 @@ async def _sse_response(
     model: str,
     request_messages: List[Dict[str, str]],
     conversation_id: int,
+    user: models.User,
     question: Optional[str] = None,
     cfg_row: Optional[models.AIConfig] = None,
 ) -> AsyncGenerator[bytes, None]:
-    """转发上游 SSE：思考内容（reasoning）、工具调用流程、正文增量；结束后落库 assistant。
+    """转发上游 SSE：思考（reasoning）、激活包/工具调用的请求与响应、正文增量；落库最终正文。
 
-    事件：{"type":"reasoning","text"} / {"type":"tool_call","name","args"} /
-    {"type":"tool_result","name","summary"} / {"type":"delta","text"} /
-    {"type":"error","message"} / {"type":"done"}。
+    事件：
+    - {"type":"round","index"}：一轮模型请求开始（前端据此把思考与调用归组）；
+    - {"type":"reasoning","text"} / {"type":"delta","text"}；
+    - {"type":"tool_call","id","kind","name","args","raw"}：
+      kind="activate" 为 pkg:activate 激活包，kind="tool" 为普通工具调用；
+    - {"type":"tool_result","id","name","ok","summary","content"}：
+      summary 为单行截断预览，content 为完整响应（前端点击弹窗查看）；
+    - {"type":"error","message"} / {"type":"done"}。
     """
 
     def sse(event: dict) -> bytes:
         return f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8")
 
     headers = {"Authorization": f"Bearer {key}"}
-    # 配置了 SearXNG 才注入联网工具说明；工具循环仅在有搜索地址时启用
     searxng_url = ""
     if cfg_row is not None:
         searxng_url = (getattr(cfg_row, "searxng_url", None) or "").strip()
-    messages: List[Dict[str, str]] = []
-    if searxng_url:
+    packages, tool_specs, handlers = _build_tool_table(user.id, searxng_url)
+
+    # 有可用包时把两阶段协议目录并入 system prompt
+    messages: List[Dict[str, str]] = list(request_messages)
+    if packages:
+        catalog = _package_catalog(packages)
         sys_idx = next(
-            (i for i, m in enumerate(request_messages) if m.get("role") == "system"),
+            (i for i, m in enumerate(messages) if m.get("role") == "system"),
             None,
         )
         if sys_idx is not None:
-            merged = request_messages[sys_idx]["content"] + "\n\n" + _TOOL_CATALOG
-            messages = list(request_messages)
-            messages[sys_idx] = {"role": "system", "content": merged}
+            messages[sys_idx] = {
+                "role": "system",
+                "content": messages[sys_idx]["content"] + "\n\n" + catalog,
+            }
         else:
-            messages = [{"role": "system", "content": _TOOL_CATALOG}] + list(request_messages)
-    else:
-        messages = list(request_messages)
+            messages.insert(0, {"role": "system", "content": catalog})
 
     collected_final = ""
-    used_tool = False
-    for _step in range(_MAX_TOOL_STEPS):
+    collected = ""
+    tool_steps = 0
+    total_rounds = 0
+    max_rounds = _MAX_TOOL_STEPS * 3 + 3  # 激活包轮不占工具额度，另加安全阀
+    call_seq = 0
+    # 思维链/工具链轨迹（随 assistant 消息落库，前端刷新/历史可还原）
+    trace_steps: List[dict] = []
+
+    while total_rounds < max_rounds:
+        total_rounds += 1
+        yield sse({"type": "round", "index": total_rounds - 1})
+        trace_steps.append({"reasoning": "", "calls": []})
         collected = ""
         flushed = 0  # 已推给前端的正文长度；工具块原文不推送（避免 XML 闪烁）
         try:
@@ -767,6 +1098,8 @@ async def _sse_response(
                         r_piece = delta.get("reasoning_content") or ""
                         if r_piece:
                             yield sse({"type": "reasoning", "text": r_piece})
+                            if trace_steps:
+                                trace_steps[-1]["reasoning"] += r_piece
                         piece = delta.get("content") or ""
                         if not piece:
                             continue
@@ -791,40 +1124,137 @@ async def _sse_response(
             collected_final = _strip_tool_calls(collected) or collected.strip()
             break
 
-        used_tool = True
         messages.append({"role": "assistant", "content": collected})
-        for call in calls:
-            name = str(call.get("name") or "")
-            args = call.get("args") or {}
-            yield sse({"type": "tool_call", "name": name, "args": args})
-            if name == "web:search" and searxng_url:
-                result = await _web_search_backend(str(args.get("query") or ""), searxng_url)
+
+        # ---- 激活包（pkg:activate，不计入工具轮数）----
+        activates = [c for c in calls if str(c.get("name")) == "pkg:activate"]
+        tool_calls = [c for c in calls if str(c.get("name")) != "pkg:activate"]
+
+        for ac in activates:
+            call_seq += 1
+            cid = call_seq
+            args = ac.get("args") or {}
+            trace_call = {
+                "id": cid,
+                "kind": "activate",
+                "name": "pkg:activate",
+                "args": args,
+                "raw": ac.get("raw") or "",
+            }
+            yield sse({"type": "tool_call", **trace_call})
+            trace_steps[-1]["calls"].append(trace_call)
+            pkg_name = str(args.get("name") or "").strip()
+            pkg_specs = [t for t in tool_specs if t.namespace == pkg_name]
+            if not pkg_name or not any(p.name == pkg_name for p in packages):
+                available = "、".join(p.name for p in packages) or "（无可用包）"
+                result_text = f"错误：包「{pkg_name}」不存在或未指定 name。可用包：{available}"
+                logger.warning("激活包失败：模型请求了不存在的包 %r", pkg_name)
             else:
-                result = f"错误：工具 {name} 不可用或未配置搜索地址。"
-            summary = result.replace("\n", " ").strip()[:120]
-            yield sse({"type": "tool_result", "name": name, "summary": summary})
-            messages.append(
-                {"role": "user", "content": f'<tool_result name="{name}">\n{result}\n</tool_result>'}
+                result_text = _package_manual(pkg_name, pkg_specs)
+                logger.info("激活工具包：%s", pkg_name)
+            trace_call["result"] = {
+                "ok": not result_text.startswith("错误："),
+                "summary": result_text.replace("\n", " ").strip()[:120],
+                "content": result_text,
+            }
+            yield sse(
+                {
+                    "type": "tool_result",
+                    "id": cid,
+                    "name": "pkg:activate",
+                    **trace_call["result"],
+                }
             )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f'<tool_result name="pkg:activate">\n{result_text}\n</tool_result>'
+                    ),
+                }
+            )
+
+        # ---- 普通工具调用 ----
+        if tool_calls:
+            if tool_steps >= _MAX_TOOL_STEPS:
+                logger.warning("工具调用轮数达到上限 %s，终止循环", _MAX_TOOL_STEPS)
+                collected_final = "抱歉，工具调用次数已达上限，请换个问法或稍后再试。"
+                break
+            tool_steps += 1
+            for call in tool_calls:
+                call_seq += 1
+                cid = call_seq
+                name = str(call.get("name") or "")
+                args = call.get("args") or {}
+                trace_call = {
+                    "id": cid,
+                    "kind": "tool",
+                    "name": name,
+                    "args": args,
+                    "raw": call.get("raw") or "",
+                }
+                yield sse({"type": "tool_call", **trace_call})
+                trace_steps[-1]["calls"].append(trace_call)
+                handler = handlers.get(name)
+                if handler is None:
+                    available = "、".join(sorted(handlers)) or "（当前无可用工具）"
+                    result_text = (
+                        f"错误：工具「{name}」不存在或未激活对应包。可用工具：{available}。"
+                        "请先 pkg:activate 激活对应包，或直接回答用户。"
+                    )
+                    logger.warning("模型调用了未注册工具 %s", name)
+                else:
+                    logger.info("执行工具：%s 参数=%s", name, args)
+                    try:
+                        result_text = await handler(args)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("工具 %s 执行异常：%r", name, exc)
+                        result_text = (
+                            f"错误：工具 {name} 执行失败：{exc}。"
+                            "不要重复调用同一工具，请基于已有信息回答或如实告知用户。"
+                        )
+                result_text = (result_text or "").strip() or "工具执行成功但没有返回内容。"
+                trace_call["result"] = {
+                    "ok": not result_text.startswith("错误："),
+                    "summary": result_text.replace("\n", " ").strip()[:120],
+                    "content": result_text,
+                }
+                yield sse(
+                    {
+                        "type": "tool_result",
+                        "id": cid,
+                        "name": name,
+                        **trace_call["result"],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": f'<tool_result name="{name}">\n{result_text}\n</tool_result>',
+                    }
+                )
     else:
-        collected_final = _strip_tool_calls(collected) or collected.strip()
+        if not collected_final:
+            collected_final = _strip_tool_calls(collected) or collected.strip()
 
     if not collected_final.strip():
         yield sse({"type": "error", "message": "模型返回了空内容。"})
         return
 
-    # 用独立会话落库 assistant（只存最终正文，不含思考与工具过程）
+    # 用独立会话落库 assistant：正文 + 思维链/工具链轨迹（刷新与历史会话可还原）
+    agent_steps_json = ai_service.dump_agent_steps(trace_steps)
     with SessionLocal() as db:
         conv = db.get(models.AIConversation, conversation_id)
         if conv is not None:
             db.add(
                 models.AIMessage(
-                    conversation_id=conv.id, role="assistant", content=collected_final
+                    conversation_id=conv.id,
+                    role="assistant",
+                    content=collected_final,
+                    agent_steps=agent_steps_json,
                 )
             )
             if question:
-                import asyncio
-
                 await asyncio.to_thread(
                     ai_service.try_ai_title, db, conv, question, collected_final, cfg_row
                 )

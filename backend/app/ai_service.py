@@ -1,7 +1,8 @@
 """AI 配置/会话的领域逻辑：用户侧 API 与机器人侧 API 共用。"""
 from __future__ import annotations
 
-from typing import List, Optional
+import json
+from typing import Any, List, Optional
 
 import httpx
 from sqlalchemy.orm import Session
@@ -525,3 +526,70 @@ def list_group_tree(db: Session, user: models.User) -> dict:
             }
         )
     return {"ok": True, "groups": out}
+
+
+# ------------------ 思维链 / 工具链轨迹（agent_steps） ------------------
+# 结构（与前端 AgentStep 对齐）：
+# [{"reasoning": str, "calls": [
+#     {"id": int, "kind": "activate"|"tool", "name": str,
+#      "args": {...}, "raw": str,
+#      "result": {"ok": bool, "summary": str, "content": str}}]}]
+# 仅 assistant 消息携带；user 消息恒为 None。
+
+def normalize_agent_steps(steps: Any) -> Optional[List[dict]]:
+    """把任意入参（API 传入/内部收集）归一化为可落库的步骤列表；非法返回 None。"""
+    if not isinstance(steps, list):
+        return None
+    out: List[dict] = []
+    for raw_step in steps:
+        if not isinstance(raw_step, dict):
+            continue
+        reasoning = str(raw_step.get("reasoning") or "")
+        calls_out: List[dict] = []
+        for raw_call in raw_step.get("calls") or []:
+            if not isinstance(raw_call, dict):
+                continue
+            kind = raw_call.get("kind")
+            if kind not in ("activate", "tool"):
+                continue
+            call: dict = {
+                "id": int(raw_call.get("id") or 0),
+                "kind": kind,
+                "name": str(raw_call.get("name") or ""),
+                "args": raw_call.get("args")
+                if isinstance(raw_call.get("args"), dict)
+                else {},
+                "raw": str(raw_call.get("raw") or ""),
+            }
+            result = raw_call.get("result")
+            if isinstance(result, dict):
+                call["result"] = {
+                    "ok": bool(result.get("ok")),
+                    "summary": str(result.get("summary") or ""),
+                    "content": str(result.get("content") or ""),
+                }
+            calls_out.append(call)
+        # 空步骤（既无思考也无调用）不保留
+        if not reasoning.strip() and not calls_out:
+            continue
+        out.append({"reasoning": reasoning, "calls": calls_out})
+    return out or None
+
+
+def dump_agent_steps(steps: Any) -> Optional[str]:
+    """归一化后序列化为 DB 文本；无有效步骤返回 None。"""
+    normalized = normalize_agent_steps(steps)
+    if normalized is None:
+        return None
+    return json.dumps(normalized, ensure_ascii=False)
+
+
+def load_agent_steps(raw: Any) -> Optional[List[dict]]:
+    """读取 DB 文本并解析；空/损坏返回 None。"""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return normalize_agent_steps(data)

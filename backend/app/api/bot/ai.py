@@ -323,7 +323,12 @@ def append_messages(
     for item in payload.messages:
         db.add(
             models.AIMessage(
-                conversation_id=conv.id, role=item.role, content=item.content
+                conversation_id=conv.id,
+                role=item.role,
+                content=item.content,
+                agent_steps=ai_service.dump_agent_steps(item.agent_steps)
+                if item.role == "assistant"
+                else None,
             )
         )
     if first_round:

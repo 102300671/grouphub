@@ -365,10 +365,27 @@ export interface AIConversationPatch {
   folder_id?: number | null;
 }
 
+/** 一次激活包/工具调用：请求与响应成对存在（与后端 agent_steps 结构对齐） */
+export interface AgentCallDTO {
+  id: number;
+  kind: "activate" | "tool";
+  name: string;
+  args: Record<string, unknown>;
+  raw: string;
+  result?: { ok: boolean; summary: string; content: string };
+}
+
+/** 一轮模型请求 = 一段思考 + 该轮内的若干调用 */
+export interface AgentStepDTO {
+  reasoning: string;
+  calls: AgentCallDTO[];
+}
+
 export interface AIMessage {
   id: number;
   role: "user" | "assistant";
   content: string;
+  agent_steps?: AgentStepDTO[] | null;
   created_at: string;
 }
 

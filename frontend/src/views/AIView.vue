@@ -17,6 +17,7 @@ import type {
   AIConversation,
   AIGroupTree,
   AIMessage,
+  AgentStepDTO,
 } from "@/types/api";
 import AIConfigModal from "@/components/AIConfigModal.vue";
 
@@ -24,13 +25,31 @@ import AIConfigModal from "@/components/AIConfigModal.vue";
 
 const groups = ref<AIGroupTree[]>([]);
 const currentId = ref<number | null>(null);
+/** 一次激活包/工具调用：请求与它的响应成对存在，响应可点开看全文 */
+interface AgentCall {
+  id: number;
+  kind: "activate" | "tool";
+  name: string;
+  args: Record<string, unknown>;
+  raw: string;
+  result?: { ok: boolean; summary: string; content: string };
+}
+/** 一轮模型请求 = 一段思考 + 该轮内的若干调用（思考与工具调用写在一起）。
+ *  done：流式期间该轮是否已结束（进入下一轮/整条回复完成）；
+ *  userCardOpen/userThinkingOpen：用户手动折叠/展开后以用户意图为准（null=跟随默认）。 */
+interface AgentStep {
+  reasoning: string;
+  calls: AgentCall[];
+  done?: boolean;
+  userCardOpen?: boolean | null;
+  userThinkingOpen?: boolean | null;
+}
 interface AIBubble {
   role: string;
   content: string;
   pending?: boolean;
   error?: boolean;
-  reasoning?: string;
-  toolCalls?: Array<{ name: string; args: Record<string, unknown>; summary: string }>;
+  steps?: AgentStep[];
 }
 const bubbles = ref<Array<AIBubble>>([]);
 
@@ -164,9 +183,36 @@ async function pickConversation(conv: AIConversation) {
   sidebarOpen.value = false;
 }
 
+/** 历史轨迹 DTO → 运行时步骤（折叠状态走默认：有调用的卡片展开、思考过程折叠） */
+function hydrateStep(dto: AgentStepDTO): AgentStep {
+  return {
+    reasoning: dto.reasoning || "",
+    calls: (dto.calls || []).map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      name: c.name,
+      args: c.args || {},
+      raw: c.raw || "",
+      result: c.result,
+    })),
+  };
+}
+
 function selectConversationObject(conv: AIConversation, msgs: AIMessage[]) {
   currentId.value = conv.id;
-  bubbles.value = msgs.map((m) => ({ role: m.role, content: m.content }));
+  bubbles.value = msgs.map((m) => {
+    const steps =
+      m.role === "assistant"
+        ? (m.agent_steps || [])
+            .map(hydrateStep)
+            .filter((st) => st.reasoning.trim() || st.calls.length)
+        : [];
+    return {
+      role: m.role,
+      content: m.content,
+      steps: steps.length ? steps : undefined,
+    };
+  });
   scrollToBottom();
 }
 
@@ -318,42 +364,83 @@ async function send() {
     role: "assistant",
     content: "",
     pending: true,
-    reasoning: "",
-    toolCalls: [],
+    steps: [],
   };
   bubbles.value.push(assistantBubble);
   sending.value = true;
   scrollToBottom();
+
+  /** 取/建第 index 轮的步骤卡片（思考与该轮调用归在同一卡片） */
+  const ensureStep = (index: number): AgentStep => {
+    const steps = (assistantBubble.steps = assistantBubble.steps || []);
+    while (steps.length <= index) steps.push({ reasoning: "", calls: [] });
+    return steps[index];
+  };
 
   const onDelta = (piece: string) => {
     assistantBubble.content += piece;
     scrollToBottom();
   };
   const onReasoning = (piece: string) => {
-    assistantBubble.reasoning = (assistantBubble.reasoning || "") + piece;
+    const step = ensureStep(
+      assistantBubble.steps && assistantBubble.steps.length
+        ? assistantBubble.steps.length - 1
+        : 0,
+    );
+    step.reasoning += piece;
     scrollToBottom();
   };
-  const onToolCall = (name: string, args: Record<string, unknown>) => {
-    // 工具轮正文丢弃：模型输出工具块后最终回答会重新生成
+  const onRound = (index: number) => {
+    ensureStep(index);
+    // 进入新一轮（工具结果回灌后）：之前的轮标记为已结束（思考自动折叠），
+    // 上一轮的临时正文丢弃，最终回答会重新生成
+    assistantBubble.steps?.forEach((st, i) => {
+      if (i < index) st.done = true;
+    });
+    if (index >= 1) assistantBubble.content = "";
+  };
+  const onToolCall = (
+    id: number,
+    kind: "activate" | "tool",
+    name: string,
+    args: Record<string, unknown>,
+    raw: string,
+  ) => {
     assistantBubble.content = "";
-    assistantBubble.toolCalls = assistantBubble.toolCalls || [];
-    assistantBubble.toolCalls.push({ name, args, summary: "" });
+    const steps = (assistantBubble.steps = assistantBubble.steps || []);
+    const step = steps[steps.length - 1] || ensureStep(0);
+    step.calls.push({ id, kind, name, args, raw });
     scrollToBottom();
   };
-  const onToolResult = (name: string, summary: string) => {
-    const list = assistantBubble.toolCalls || [];
-    const last = list[list.length - 1];
-    if (last && last.name === name) last.summary = summary;
+  const onToolResult = (
+    id: number,
+    name: string,
+    ok: boolean,
+    summary: string,
+    content: string,
+  ) => {
+    const target = (assistantBubble.steps || [])
+      .flatMap((s) => s.calls)
+      .find((c) => c.id === id);
+    if (target) target.result = { ok, summary, content };
     scrollToBottom();
   };
 
   try {
     if (isLocal) {
-      await sendLocal(convId, cfg as AIConfig, content, onDelta, onReasoning);
+      await sendLocal(
+        convId,
+        cfg as AIConfig,
+        content,
+        onDelta,
+        onReasoning,
+        assistantBubble.steps || [],
+      );
     } else {
       await sendRemote(convId, {
         onDelta,
         onReasoning,
+        onRound,
         onToolCall,
         onToolResult,
       });
@@ -377,8 +464,21 @@ async function sendRemote(
   handlers: {
     onDelta: (t: string) => void;
     onReasoning: (t: string) => void;
-    onToolCall: (name: string, args: Record<string, unknown>) => void;
-    onToolResult: (name: string, summary: string) => void;
+    onRound: (index: number) => void;
+    onToolCall: (
+      id: number,
+      kind: "activate" | "tool",
+      name: string,
+      args: Record<string, unknown>,
+      raw: string,
+    ) => void;
+    onToolResult: (
+      id: number,
+      name: string,
+      ok: boolean,
+      summary: string,
+      content: string,
+    ) => void;
   },
 ) {
   // 最后一条 user bubble 即本次提问
@@ -393,6 +493,7 @@ async function sendLocal(
   content: string,
   onDelta: (t: string) => void,
   onReasoning?: (t: string) => void,
+  liveSteps: AgentStep[] = [],
 ) {
   if (!cfg.api_base || !cfg.model) {
     throw new Error("本地配置不完整：请在「AI 配置」中补全端点与模型名。");
@@ -420,7 +521,15 @@ async function sendLocal(
     },
     onReasoning,
   );
-  await aiClient.appendMessage(convId, "assistant", answer);
+  const traceSteps = liveSteps
+    .filter((st) => st.reasoning.trim() || st.calls.length)
+    .map((st) => ({ reasoning: st.reasoning, calls: st.calls }));
+  await aiClient.appendMessage(
+    convId,
+    "assistant",
+    answer,
+    traceSteps.length ? traceSteps : undefined,
+  );
 }
 
 // ---------------- 输入框 ----------------
@@ -451,6 +560,101 @@ function timeLabel(conv: AIConversation): string {
     ? d.toTimeString().slice(0, 5)
     : `${d.getMonth() + 1}/${d.getDate()}`;
 }
+
+// ---------------- 思考 / 激活包 / 工具调用 步骤卡片 ----------------
+
+/** 卡片标题：无任何调用→「思考过程」；有激活包或工具调用→「思考与工具调用」 */
+function stepTitle(step: AgentStep): string {
+  return step.calls.length ? "思考与工具调用" : "思考过程";
+}
+
+/** 步骤卡片展开规则：
+ * 流式中的当前轮自动展开；结束/历史消息里，有调用的卡片保持展开（看工具流程），
+ * 纯思考卡片自动折叠；用户手动开合后始终以用户意图为准。 */
+function isCardOpen(b: AIBubble, step: AgentStep): boolean {
+  if (step.userCardOpen != null) return step.userCardOpen;
+  const active = !!b.pending && !step.done;
+  return active || step.calls.length > 0;
+}
+
+/** 思考过程展开规则：仅流式中的当前轮实时展开，结束后自动折叠（用户可再展开） */
+function isThinkingOpen(b: AIBubble, step: AgentStep): boolean {
+  if (step.userThinkingOpen != null) return step.userThinkingOpen;
+  return !!b.pending && !step.done;
+}
+
+function onCardToggle(ev: Event, step: AgentStep) {
+  step.userCardOpen = (ev.target as HTMLDetailsElement).open;
+}
+function onThinkingToggle(ev: Event, step: AgentStep) {
+  step.userThinkingOpen = (ev.target as HTMLDetailsElement).open;
+}
+
+/** 请求行：激活包显示「pkg:activate + 包名」；工具显示「包名:工具名 + 参数」 */
+function callRequestText(call: AgentCall): string {
+  if (call.kind === "activate") {
+    const pkg = String(call.args?.name || "").trim();
+    return pkg ? `pkg:activate　name=${pkg}` : "pkg:activate";
+  }
+  return call.name || "(未知调用)";
+}
+
+/** 请求行右侧的参数摘要（键=值，超长截断） */
+function callArgsPreview(call: AgentCall): string {
+  if (call.kind === "activate") return "";
+  const entries = Object.entries(call.args || {});
+  if (!entries.length) return "";
+  const text = entries
+    .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
+    .join("　");
+  return text.length > 80 ? text.slice(0, 79) + "…" : text;
+}
+
+// ---------------- 请求 / 响应详情弹窗 ----------------
+
+interface DetailModalState {
+  title: string;
+  call: AgentCall;
+  tab: "request" | "response";
+}
+const detailModal = ref<DetailModalState | null>(null);
+
+function openRequestDetail(call: AgentCall) {
+  detailModal.value = {
+    title: call.kind === "activate" ? "激活包请求" : "工具调用请求",
+    call,
+    tab: "request",
+  };
+}
+function openResponseDetail(call: AgentCall) {
+  if (!call.result) return;
+  detailModal.value = {
+    title: call.kind === "activate" ? "激活包响应" : "工具调用响应",
+    call,
+    tab: "response",
+  };
+}
+function closeDetail() {
+  detailModal.value = null;
+}
+
+/** 参数按 key=value 列出；响应内容若是 JSON 则美化，其余按原文展示 */
+const modalArgs = computed<Array<[string, string]>>(() => {
+  const call = detailModal.value?.call;
+  if (!call) return [];
+  return Object.entries(call.args || {}).map(([k, v]) => [
+    k,
+    typeof v === "string" ? v : JSON.stringify(v, null, 2),
+  ]);
+});
+const modalResponseText = computed(() => {
+  const raw = detailModal.value?.call.result?.content || "";
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+});
 </script>
 
 <template>
@@ -665,28 +869,97 @@ function timeLabel(conv: AIConversation): string {
             {{ b.role === "user" ? "🧑" : "🤖" }}
           </div>
           <div class="bubble" :class="{ error: b.error }">
-            <details v-if="b.reasoning" class="ai-reasoning" open>
-              <summary>🧠 思考过程</summary>
-              <div class="ai-reasoning-body">{{ b.reasoning }}</div>
+            <!-- 每轮一张卡片：思考与该轮的激活包/工具调用写在一起 -->
+            <details
+              v-for="(step, si) in b.steps"
+              :key="si"
+              class="agent-step"
+              :class="{ 'has-calls': step.calls.length }"
+              :open="isCardOpen(b, step)"
+              @toggle="onCardToggle($event, step)"
+            >
+              <summary class="agent-step-head">
+                <span class="agent-step-icon">{{
+                  step.calls.length ? "🧰" : "🧠"
+                }}</span>
+                <span class="agent-step-title">{{ stepTitle(step) }}</span>
+                <span v-if="step.calls.length" class="agent-step-count">
+                  {{ step.calls.length }} 次调用
+                </span>
+              </summary>
+              <div class="agent-step-body">
+                <!-- 有激活包/工具调用：思考过程折叠为子小节（生成完自动折叠），
+                     工具调用流程以目录树平铺 -->
+                <template v-if="step.calls.length">
+                  <details
+                    v-if="step.reasoning"
+                    class="thinking-block"
+                    :open="isThinkingOpen(b, step)"
+                    @toggle="onThinkingToggle($event, step)"
+                  >
+                    <summary class="thinking-head">
+                      <span class="thinking-icon">💭</span>
+                      <span>思考过程</span>
+                    </summary>
+                    <div class="agent-reasoning">{{ step.reasoning }}</div>
+                  </details>
+
+                  <!-- 目录树：请求 ├─/└─，其响应为唯一子节点（竖线连接） -->
+                  <div class="agent-tree">
+                    <template v-for="(call, ci) in step.calls" :key="call.id">
+                      <div
+                        class="tree-row tree-request"
+                        :class="call.kind"
+                        title="点击查看完整请求与参数"
+                        @click="openRequestDetail(call)"
+                      >
+                        <span class="tree-mark">{{
+                          ci === step.calls.length - 1 ? "└─" : "├─"
+                        }}</span>
+                        <span class="req-icon">{{
+                          call.kind === "activate" ? "📦" : "🔧"
+                        }}</span>
+                        <span class="req-cmd">{{ callRequestText(call) }}</span>
+                        <span v-if="callArgsPreview(call)" class="req-args">
+                          {{ callArgsPreview(call) }}
+                        </span>
+                        <span class="row-hint">查看请求</span>
+                      </div>
+                      <div class="tree-children">
+                        <div v-if="!call.result" class="tree-row tree-pending">
+                          <span class="tree-mark">└─</span>
+                          <span class="waiting-dots">
+                            <i></i><i></i><i></i> 等待响应…
+                          </span>
+                        </div>
+                        <div
+                          v-else
+                          class="tree-row tree-response"
+                          :class="{ error: !call.result.ok }"
+                          title="点击查看完整响应"
+                          @click="openResponseDetail(call)"
+                        >
+                          <span class="tree-mark">└─</span>
+                          <span class="resp-status">{{
+                            call.result.ok ? "✅" : "⚠️"
+                          }}</span>
+                          <span class="resp-preview">{{ call.result.summary }}</span>
+                          <span class="row-hint">完整响应</span>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <!-- 无调用：整张卡片就是「思考过程」，正文在卡片外 -->
+                <div v-else-if="step.reasoning" class="agent-reasoning">{{ step.reasoning }}</div>
+              </div>
             </details>
-            <div v-for="(tc, j) in b.toolCalls" :key="j" class="ai-tool">
-              <span class="ai-tool-name">{{
-                tc.name === "web:search" ? "🔍 联网搜索" : "🔧 " + tc.name
-              }}</span>
-              <span
-                v-if="tc.name === 'web:search' && tc.args && tc.args.query"
-                class="ai-tool-query"
-              >
-                「{{ tc.args.query }}」
-              </span>
-              <span v-if="tc.summary" class="ai-tool-summary">{{ tc.summary }}</span>
-            </div>
             <span
               v-if="
                 b.pending &&
                 !b.content &&
-                !b.reasoning &&
-                (!b.toolCalls || !b.toolCalls.length)
+                (!b.steps ||
+                  !b.steps.some((s) => s.reasoning || s.calls.length))
               "
               class="typing"
             >
@@ -721,6 +994,61 @@ function timeLabel(conv: AIConversation): string {
       @close="showConfig = false"
       @changed="onConfigChanged"
     />
+
+    <!-- 请求 / 响应详情弹窗 -->
+    <div
+      v-if="detailModal"
+      class="detail-mask"
+      @click.self="closeDetail"
+    >
+      <div class="detail-modal">
+        <header class="detail-header">
+          <span class="detail-title">{{ detailModal.title }}</span>
+          <button type="button" class="detail-close" @click="closeDetail">×</button>
+        </header>
+        <div class="detail-body">
+          <template v-if="detailModal.tab === 'request'">
+            <section class="detail-sec">
+              <h4><span class="sec-tag">命令</span></h4>
+              <pre class="detail-code cmd">{{
+                detailModal.call.kind === "activate"
+                  ? "pkg:activate"
+                  : detailModal.call.name
+              }}</pre>
+            </section>
+            <section v-if="modalArgs.length" class="detail-sec">
+              <h4><span class="sec-tag">参数</span></h4>
+              <table class="detail-args">
+                <tbody>
+                  <tr v-for="[k, v] in modalArgs" :key="k">
+                    <th>{{ k }}</th>
+                    <td><pre>{{ v }}</pre></td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+            <section v-if="detailModal.call.raw" class="detail-sec">
+              <h4><span class="sec-tag">原始请求协议</span></h4>
+              <pre class="detail-code raw">{{ detailModal.call.raw }}</pre>
+            </section>
+          </template>
+          <template v-else>
+            <section class="detail-sec">
+              <h4>
+                <span class="sec-tag">响应内容</span>
+                <span
+                  class="resp-badge"
+                  :class="detailModal.call.result?.ok ? 'ok' : 'fail'"
+                >
+                  {{ detailModal.call.result?.ok ? "成功" : "失败" }}
+                </span>
+              </h4>
+              <pre class="detail-code raw response">{{ modalResponseText }}</pre>
+            </section>
+          </template>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1025,6 +1353,7 @@ function timeLabel(conv: AIConversation): string {
 .messages {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px 16px;
   display: flex;
   flex-direction: column;
@@ -1068,6 +1397,7 @@ function timeLabel(conv: AIConversation): string {
   display: flex;
   gap: 10px;
   max-width: 86%;
+  min-width: 0;
 }
 .msg-row.user {
   align-self: flex-end;
@@ -1092,6 +1422,7 @@ function timeLabel(conv: AIConversation): string {
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+  min-width: 0;
 }
 .msg-row.user .bubble {
   background: var(--color-primary, #db2777);
@@ -1189,48 +1520,339 @@ function timeLabel(conv: AIConversation): string {
   }
 }
 
-.ai-reasoning {
+/* ---------- 思考 / 工具步骤卡片（思考与调用写在一起） ---------- */
+.agent-step {
   margin: 2px 0 8px;
-  font-size: 12px;
-  color: #8b90a0;
-  background: rgba(127, 140, 255, 0.06);
-  border-radius: 8px;
-  padding: 4px 8px;
+  border: 1px solid rgba(127, 140, 255, 0.22);
+  background: linear-gradient(180deg, rgba(127, 140, 255, 0.07), rgba(127, 140, 255, 0.03));
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 12.5px;
 }
-.ai-reasoning summary {
+.agent-step.has-calls {
+  border-color: rgba(219, 39, 119, 0.22);
+  background: linear-gradient(180deg, rgba(219, 39, 119, 0.05), rgba(127, 140, 255, 0.03));
+}
+.agent-step-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
   cursor: pointer;
   user-select: none;
+  list-style: none;
+  color: #5b6075;
 }
-.ai-reasoning-body {
-  margin-top: 4px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: #a0a4b3;
+.agent-step-head::-webkit-details-marker {
+  display: none;
 }
-.ai-tool {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  font-size: 12px;
-  color: #7d82f5;
-  background: rgba(125, 130, 245, 0.08);
-  border: 1px solid rgba(125, 130, 245, 0.18);
-  border-radius: 8px;
-  padding: 3px 8px;
-  margin: 2px 0 6px;
+.agent-step-icon {
+  font-size: 13px;
 }
-.ai-tool-name {
+.agent-step-title {
   font-weight: 600;
-}
-.ai-tool-query {
-  color: #4b4f5e;
-}
-.ai-tool-summary {
-  color: #8b90a0;
-  max-width: 100%;
+  color: #4a4f63;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.agent-step-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #9aa0b5;
+  background: rgba(127, 140, 255, 0.1);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
+.agent-step-body {
+  padding: 2px 10px 8px;
+  min-width: 0;
+}
+.agent-reasoning {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #8a8fa6;
+  line-height: 1.6;
+  padding: 2px 0 6px;
+}
+/* 有工具调用的卡片内：思考过程折叠为子小节（生成完自动折叠，可手动展开） */
+.thinking-block {
+  margin: 0 0 6px;
+  border: 1px solid rgba(127, 140, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(127, 140, 255, 0.04);
+  overflow: hidden;
+}
+.thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #8a8fa6;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.thinking-head::-webkit-details-marker {
+  display: none;
+}
+.thinking-head::before {
+  content: "▸";
+  font-size: 10px;
+  color: #b3b9d4;
+  transition: transform 0.15s ease;
+}
+.thinking-block[open] .thinking-head::before {
+  transform: rotate(90deg);
+}
+.thinking-block .agent-reasoning {
+  padding: 2px 12px 8px;
+}
+
+/* ---------- 请求/响应目录树 ---------- */
+.agent-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 7px;
+  padding: 4px 8px;
+  line-height: 1.45;
+  cursor: default;
+  min-width: 0;
+}
+.tree-mark {
+  color: #b3b9d4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  flex-shrink: 0;
+}
+.tree-request {
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.tree-request.activate {
+  background: rgba(124, 58, 237, 0.08);
+  color: #6d28d9;
+}
+.tree-request.tool {
+  background: rgba(37, 99, 235, 0.07);
+  color: #1d4ed8;
+}
+.tree-request:hover {
+  border-color: rgba(100, 110, 200, 0.35);
+}
+.req-cmd {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.req-args {
+  color: #555b70;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.row-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: #aab0c8;
+  text-decoration: underline dotted;
+  flex-shrink: 0;
+}
+/* 响应作为请求的子节点：竖线 + 缩进 */
+.tree-children {
+  margin-left: 20px;
+  padding-left: 12px;
+  border-left: 1.5px dashed rgba(130, 140, 200, 0.35);
+  min-width: 0;
+}
+.tree-response {
+  cursor: pointer;
+  color: #5f6478;
+  transition: background 0.15s;
+}
+.tree-response:hover {
+  background: rgba(127, 140, 255, 0.08);
+}
+.tree-response.error {
+  color: #c2410c;
+  background: rgba(249, 115, 22, 0.07);
+}
+.resp-status {
+  flex-shrink: 0;
+}
+.resp-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tree-pending {
+  color: #9aa0b5;
+}
+.waiting-dots i,
+.typing i {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  margin: 0 1px;
+  animation: blink 1.2s infinite both;
+}
+.waiting-dots i:nth-child(2),
+.typing i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.waiting-dots i:nth-child(3),
+.typing i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+
+/* ---------- 请求 / 响应详情弹窗 ---------- */
+.detail-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(30, 32, 48, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+.detail-modal {
+  width: min(720px, 100%);
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 18px 60px rgba(40, 42, 70, 0.28);
+  overflow: hidden;
+}
+.detail-header {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid #eef0f6;
+}
+.detail-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: #33384f;
+}
+.detail-close {
+  margin-left: auto;
+  border: none;
+  background: #f2f3f8;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 17px;
+  line-height: 1;
+  color: #7a8099;
+  cursor: pointer;
+}
+.detail-close:hover {
+  background: #e6e8f2;
+}
+.detail-body {
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.detail-sec h4 {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sec-tag {
+  background: rgba(127, 140, 255, 0.12);
+  color: #5560c8;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-weight: 600;
+}
+.detail-code {
+  margin: 0;
+  background: #1e2030;
+  color: #d7dcf0;
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.detail-code.cmd {
+  color: #9effc0;
+}
+.detail-code.response {
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.detail-args {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.detail-args th {
+  width: 110px;
+  vertical-align: top;
+  text-align: left;
+  color: #7a8099;
+  font-weight: 600;
+  padding: 6px 10px 6px 0;
+}
+.detail-args td {
+  padding: 4px 0;
+}
+.detail-args td pre {
+  margin: 0;
+  background: #f5f6fb;
+  border: 1px solid #eaecf4;
+  border-radius: 8px;
+  padding: 7px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #3c4157;
+}
+.resp-badge {
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.resp-badge.ok {
+  background: rgba(34, 197, 94, 0.13);
+  color: #15803d;
+}
+.resp-badge.fail {
+  background: rgba(249, 115, 22, 0.15);
+  color: #c2410c;
 }
 </style>

@@ -83,6 +83,9 @@ def _migrate_sqlite(engine) -> None:
             "folder_id": "INTEGER",
             "is_default": "BOOLEAN NOT NULL DEFAULT 0",
         },
+        "ai_messages": {
+            "agent_steps": "TEXT",
+        },
     }
     with engine.connect() as conn:
         for table, columns in wanted.items():

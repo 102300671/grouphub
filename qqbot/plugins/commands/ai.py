@@ -190,6 +190,7 @@ async def _chat(
     key: str,
     model: Optional[str],
     on_delta: Optional[Callable[[str], Awaitable[None]]] = None,
+    on_reasoning: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> str:
     """调用 chat/completions（流式），返回首条回复文本。失败抛 CommandError（中文可读）。
 
@@ -249,7 +250,13 @@ async def _chat(
             try:
                 chunk = json.loads(data)
                 delta = chunk["choices"][0].get("delta", {})
-                # reasoning_content 为模型思考链，QQ 不展示
+                # reasoning_content 为模型思考链：QQ 消息不展示，仅回调收集（随轨迹落库）
+                r_piece = delta.get("reasoning_content") or ""
+                if r_piece and on_reasoning is not None:
+                    try:
+                        await on_reasoning(r_piece)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(f"[ai] on_reasoning 回调异常（不影响主流程）：{exc}")
                 piece = delta.get("content") or ""
             except (ValueError, KeyError, IndexError):
                 continue
@@ -998,21 +1005,59 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     if is_c2c_stream:
         streamer = _C2CStreamer(bot, event, c2c_uid, msg_id=getattr(event, "id", None) or None)
 
+    # 思维链/工具链轨迹：随 assistant 消息同步后端，前端（含本会话网页端视图）
+    # 可完整还原；QQ 群内仍只收到正文与少量工具提示。
+    trace_steps: List[Dict[str, object]] = []
+
     async def _on_agent_event(kind: str, payload: Dict[str, object]) -> None:
-        # 单聊流式：工具轮之后的最终回答要整体覆盖中间内容，重置累计文本
-        if streamer is not None and kind == "before_chat" and int(payload.get("step") or 0) >= 1:
-            streamer.reset()
-        # 群聊精简：不发送「思考中」类占位；只保留工具调用过程的可见回复
-        if kind == "tool_call" and payload.get("name") == "web:search":
-            await bot.send(event, f"🔍 联网搜索：{payload.get('args', {}).get('query', '')}")
-        elif kind == "tool_call" and payload.get("name") == "site:add":
-            await bot.send(event, f"📤 上传作品到站点：{payload.get('args', {}).get('title', '')}")
-        # tool_error 的详细日志由 _lib/aitools 统一输出
+        if kind == "round":
+            index = int(payload.get("index") or 0)
+            trace_steps.append({"reasoning": "", "calls": []})
+            # 单聊流式：工具轮之后的最终回答要整体覆盖中间内容，重置累计文本
+            if streamer is not None and index >= 1:
+                streamer.reset()
+        elif kind == "reasoning":
+            if trace_steps:
+                trace_steps[-1]["reasoning"] += str(payload.get("text") or "")
+        elif kind == "tool_call":
+            call_obj: Dict[str, object] = {
+                "id": int(payload.get("id") or 0),
+                "kind": payload.get("kind") or "tool",
+                "name": str(payload.get("name") or ""),
+                "args": payload.get("args")
+                if isinstance(payload.get("args"), dict)
+                else {},
+                "raw": str(payload.get("raw") or ""),
+            }
+            if trace_steps:
+                trace_steps[-1]["calls"].append(call_obj)
+            # 群聊精简提示：激活包不提示，只保留真实工具动作
+            if call_obj["kind"] == "tool":
+                args = call_obj["args"]
+                if call_obj["name"] == "web:search":
+                    await bot.send(event, f"🔍 联网搜索：{args.get('query', '')}")
+                elif call_obj["name"] == "site:add":
+                    await bot.send(event, f"📤 上传作品到站点：{args.get('title', '')}")
+        elif kind == "tool_result":
+            cid = int(payload.get("id") or 0)
+            result_obj = {
+                "ok": bool(payload.get("ok")),
+                "summary": str(payload.get("summary") or ""),
+                "content": str(payload.get("content") or ""),
+            }
+            for step in reversed(trace_steps):
+                target = next(
+                    (c for c in step["calls"] if c["id"] == cid), None
+                )
+                if target is not None:
+                    target["result"] = result_obj
+                    break
 
     async def _chat_once(msgs: List[Dict[str, str]]) -> str:
         return await _chat(
             msgs, base=base, key=key, model=final_model,
             on_delta=streamer.send if streamer is not None else None,
+            on_reasoning=lambda text: _on_agent_event("reasoning", {"text": text}),
         )
 
     try:
@@ -1043,7 +1088,11 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
                 caller_qq,
                 [
                     {"role": "user", "content": question},
-                    {"role": "assistant", "content": answer},
+                    {
+                        "role": "assistant",
+                        "content": answer,
+                        "agent_steps": trace_steps,
+                    },
                 ],
             )
         except Exception as exc:  # noqa: BLE001 同步失败不影响已发出的回答

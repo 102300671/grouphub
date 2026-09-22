@@ -401,6 +401,7 @@ class AIMessageOut(BaseModel):
     id: int
     role: str
     content: str
+    agent_steps: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
 
 
@@ -476,6 +477,8 @@ class AIMessageIn(BaseModel):
     """本地配置浏览器直连时，用它单独持久化一条消息。"""
     role: str = Field(..., pattern="^(user|assistant)$")
     content: str = Field(..., min_length=1)
+    # 仅 assistant 有意义：思维链/工具链轨迹（读取时归一化）
+    agent_steps: Optional[List[Dict[str, Any]]] = None
 
 
 class AIChatIn(BaseModel):
