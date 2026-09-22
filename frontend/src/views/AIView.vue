@@ -360,13 +360,15 @@ async function send() {
 
   input.value = "";
   bubbles.value.push({ role: "user", content });
-  const assistantBubble: AIBubble = {
+  bubbles.value.push({
     role: "assistant",
     content: "",
     pending: true,
     steps: [],
-  };
-  bubbles.value.push(assistantBubble);
+  });
+  // 必须从响应式数组取回代理对象：持有 push 前的原始引用去改属性，
+  // Vue3 不会触发重渲染（表现为回复结束时整段一次性出现，而不是逐字流式）。
+  const assistantBubble: AIBubble = bubbles.value[bubbles.value.length - 1];
   sending.value = true;
   scrollToBottom();
 
