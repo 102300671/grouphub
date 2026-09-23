@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, List, Optional
 
 import httpx
@@ -12,6 +13,27 @@ from .models import utcnow
 
 
 # ------------------ 配置 ------------------
+
+def current_date_hint() -> str:
+    """动态日期提示：每次请求注入 system，校准模型对「现在/今年/最新」的认知。
+
+    模型训练数据可能停留在旧年份（如 2025），静态提示词无法跨年，
+    因此日期必须在请求时实时生成。
+    """
+    now = datetime.now()
+    weekdays = "一二三四五六日"
+    return (
+        "# 当前时间\n"
+        f"今天是 {now.year} 年 {now.month} 月 {now.day} 日"
+        f"（星期{weekdays[now.weekday()]}），北京时间（UTC+8）。\n"
+        "- 回答涉及「现在、今天、今年、最新、最近、当前、近期」等时效性问题时，"
+        "一律以该日期为准；你的训练数据可能停留在更早的时间，严禁沿用旧年份（例如 2025）。\n"
+        "- 需要最新信息（新闻、新版本、近期作品/赛事/价格等）时先调用 web:search 联网搜索，"
+        f"搜索关键词优先带上当前年份 {now.year}；结论以搜索结果标注的发布日期为准，"
+        "不要把旧年份的结果当作最新。\n"
+        "- 若无法确认当前日期，可先用 web:search 搜索「今天日期」校准。"
+    )
+
 
 def mask_key(key: Optional[str]) -> Optional[str]:
     """密钥打码：列表/详情统一只回打码值。"""

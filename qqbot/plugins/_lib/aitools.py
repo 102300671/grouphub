@@ -24,6 +24,7 @@ import contextvars
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Awaitable, Callable, Dict, List, Optional
 
 # nonebot 用 loguru 输出，标准库 logging 的记录不会出现在 `nb run` 终端；
@@ -307,6 +308,27 @@ def strip_tool_calls(text: str) -> str:
 
 
 # ------------------ 包目录与工具手册 ------------------
+
+def date_hint() -> str:
+    """动态日期提示：每次问答注入 system，校准模型对「现在/今年/最新」的认知。
+
+    模型训练数据可能停留在旧年份（如 2025），静态提示词无法跨年，
+    因此日期在请求时实时生成。
+    """
+    now = datetime.now()
+    weekdays = "一二三四五六日"
+    return (
+        "# 当前时间\n"
+        f"今天是 {now.year} 年 {now.month} 月 {now.day} 日"
+        f"（星期{weekdays[now.weekday()]}），北京时间（UTC+8）。\n"
+        "- 回答涉及「现在、今天、今年、最新、最近、当前、近期」等时效性问题时，"
+        "一律以该日期为准；你的训练数据可能停留在更早的时间，严禁沿用旧年份（例如 2025）。\n"
+        "- 需要最新信息（新闻、新版本、近期作品/赛事/价格等）时先调用 web:search 联网搜索，"
+        f"搜索关键词优先带上当前年份 {now.year}；结论以搜索结果标注的发布日期为准，"
+        "不要把旧年份的结果当作最新。\n"
+        "- 若无法确认当前日期，可先用 web:search 搜索「今天日期」校准。"
+    )
+
 
 def package_catalog() -> str:
     """生成模型侧的包目录（只有包名+简介），拼进 system prompt。

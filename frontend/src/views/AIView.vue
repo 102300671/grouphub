@@ -503,10 +503,19 @@ async function sendLocal(
   // 先落用户消息
   await aiClient.appendMessage(convId, "user", content);
 
-  // 组装上下文：系统提示词（本配置自定义 > 内置默认）+ 此前全部消息
+  // 组装上下文：系统提示词（本配置自定义 > 内置默认）+ 动态当前日期 + 此前全部消息
   const systemPrompt = cfg.system_prompt || builtinConfig.value?.system_prompt;
   const history: Array<{ role: string; content: string }> = [];
-  if (systemPrompt) history.push({ role: "system", content: systemPrompt });
+  const dateHint = (() => {
+    const d = new Date();
+    const wd = "日一二三四五六"[d.getDay()];
+    return `# 当前时间\n今天是 ${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日（星期${wd}）。` +
+      "涉及「现在、今天、今年、最新、最近、当前」等时效性问题时一律以该日期为准，" +
+      "严禁沿用旧年份（例如 2025）；需要实时信息时先联网搜索，关键词带上当前年份。";
+  })();
+  if (systemPrompt || dateHint) {
+    history.push({ role: "system", content: [systemPrompt, dateHint].filter(Boolean).join("\n\n") });
+  }
   // 排除刚 push 的 user 和 pending assistant（最后两个）
   bubbles.value.slice(0, -2).forEach((b) => {
     if (!b.error) history.push({ role: b.role, content: b.content });

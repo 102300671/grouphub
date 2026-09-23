@@ -991,8 +991,12 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     final_model = model_override or endpoint_model
 
     messages: List[Dict[str, str]] = []
-    # 生效配置的人设提示词（用户自建配置没写则回退默认）+ 工具协议手册
-    system_parts = [user_system_prompt or cfg["system_prompt"], aitools.package_catalog()]
+    # 生效配置的人设提示词（用户自建配置没写则回退默认）+ 动态当前日期 + 工具协议手册
+    system_parts = [
+        user_system_prompt or cfg["system_prompt"],
+        aitools.date_hint(),
+        aitools.package_catalog(),
+    ]
     system_content = "\n\n".join(part for part in system_parts if part)
     if system_content:
         messages.append({"role": "system", "content": system_content})

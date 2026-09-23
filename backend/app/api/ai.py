@@ -961,8 +961,11 @@ def chat(
     url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
     history = ai_service.recent_text_messages(conv, _HISTORY_LIMIT)
     request_messages: List[Dict[str, str]] = []
-    if system_prompt:
-        request_messages.append({"role": "system", "content": system_prompt})
+    # 动态注入当前日期（人设提示词之后、工具目录之前），校准模型时效认知
+    system_content = "\n\n".join(
+        part for part in [system_prompt, ai_service.current_date_hint()] if part
+    )
+    request_messages.append({"role": "system", "content": system_content})
     request_messages.extend(history)
 
     return_stream = _sse_response(
