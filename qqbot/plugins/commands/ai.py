@@ -373,7 +373,11 @@ async def _web_search_tool(args: Dict[str, str]) -> str:
 aitools.register_package(
     aitools.Package(
         name="web",
-        description="联网搜索：通过本地 SearXNG 检索网页，获取最新资讯、版本信息、攻略资料等。",
+        description=(
+            "联网搜索 + 内容渲染：通过本地 SearXNG 检索网页获取最新资讯/版本信息/攻略资料；"
+            "也可把文本/Markdown/HTML 渲染成图片、对网页整页截图并发到当前会话。用户要求"
+            "「渲染成图片/做成图片/截图/图片展示」或回答适合用图片呈现时，也激活本包。"
+        ),
     )
 )
 aitools.register_tool(

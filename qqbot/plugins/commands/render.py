@@ -6,7 +6,7 @@
   /渲染 html <内容>     HTML 转图片
   /渲染 网页 <url>      网页整页截图
 
-AI 工具（render 包）：render:text / render:md / render:html / render:screenshot。
+AI 工具（web 包内）：web:text / web:md / web:html / web:screenshot，与 web:search 同一工具包。
 由 /ai 会话按需调用：渲染成功后图片直接发到当前会话（经 aitools 注入的
 图片发送器），模型收到文本回执后简短收尾即可，无需重复图片全文。
 """
@@ -140,7 +140,7 @@ async def screenshot(bot: Bot, event: Event, result: ParseResult) -> None:
     await send_image(bot, event, img, "网页截图.png")
 
 
-# ------------------ AI 工具（render 包） ------------------
+# ------------------ AI 工具（并入 web 包） ------------------
 
 
 async def _ai_render(kind: str, args: Dict[str, str]) -> str:
@@ -208,20 +208,10 @@ async def _ai_screenshot(args: Dict[str, str]) -> str:
     return f"已截取网页并{note}。用户可直接看到图片，你只需简短说明页面内容要点。"
 
 
-aitools.register_package(
-    aitools.Package(
-        name="render",
-        description=(
-            "渲染包：把内容渲染成图片发到当前会话——长文本、Markdown 排版"
-            "（表格/代码/列表）、HTML 卡片、网页整页截图。"
-            "用户说「渲染成图片/做成图片/截图/图片展示」、或回答适合用图片呈现"
-            "（长文、表格、代码、网页）时调用；渲染后图片直接发到会话里。"
-        ),
-    )
-)
+
 aitools.register_tool(
     aitools.Tool(
-        namespace="render",
+        namespace="web",
         name="text",
         description="把文本内容渲染成图片发送到当前会话。适合长文本、公告、适合整页呈现的内容。",
         handler=lambda args: _ai_render("text", args),
@@ -233,7 +223,7 @@ aitools.register_tool(
 )
 aitools.register_tool(
     aitools.Tool(
-        namespace="render",
+        namespace="web",
         name="md",
         description="把 Markdown 内容渲染成图片发送到当前会话。表格、代码块、列表、标题排版适合用它。",
         handler=lambda args: _ai_render("md", args),
@@ -245,7 +235,7 @@ aitools.register_tool(
 )
 aitools.register_tool(
     aitools.Tool(
-        namespace="render",
+        namespace="web",
         name="html",
         description="把 HTML 片段渲染成图片发送到当前会话。需要自定义样式/卡片布局时用。",
         handler=lambda args: _ai_render("html", args),
@@ -257,7 +247,7 @@ aitools.register_tool(
 )
 aitools.register_tool(
     aitools.Tool(
-        namespace="render",
+        namespace="web",
         name="screenshot",
         description="截取指定网页的整页截图并发送到当前会话。用户要看某个网址页面内容/外观时用。",
         handler=_ai_screenshot,
