@@ -27,6 +27,7 @@ from nonebot.adapters import Bot, Event
 
 from .._lib import aisync, aitools
 from .._lib.bots import qq_openapi_request, resolve_sender_qq
+from .._lib.renderer import send_image
 from .._lib.cli import Command, CommandError, Option, ParseResult
 
 _ENV_PATH = Path(__file__).resolve().parents[2] / ".env.prod"
@@ -916,6 +917,16 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     caller_qq = await resolve_sender_qq(event)
     qq_token = aitools.set_current_user_qq(caller_qq)
 
+    # 注入图片发送器：渲染类工具（render 包）把图片直接发到当前会话
+    async def _image_sender(img_bytes: bytes, filename: str) -> str:
+        try:
+            return await send_image(bot, event, img_bytes, filename)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[ai render] 图片发送失败：{exc}")
+            return "渲染成功但图片发送失败（详见日志），请改用文本回复用户。"
+
+    img_token = aitools.set_current_image_sender(_image_sender)
+
     cfg = get_config()
     base = ""
     key = ""
@@ -937,6 +948,7 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
                     "请在网页端 AI 页面使用该配置，或用「/ai 切换 默认」切回远程配置。",
                 )
                 aitools.reset_current_user_qq(qq_token)
+                aitools.reset_current_image_sender(img_token)
                 return
             base = (active.get("api_base") or "").rstrip("/")
             key = active.get("api_key") or ""
@@ -971,6 +983,7 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
                     "绑定后再来提问。",
                 )
                 aitools.reset_current_user_qq(qq_token)
+                aitools.reset_current_image_sender(img_token)
                 return
             logger.warning(f"[ai] 后端配置/会话获取失败，降级 .env.prod 默认：{exc}")
         except Exception as exc:  # noqa: BLE001 后端离线 → 降级本地默认
@@ -1080,6 +1093,7 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         return
     finally:
         aitools.reset_current_user_qq(qq_token)
+        aitools.reset_current_image_sender(img_token)
 
     if not answer:
         answer = "（模型没有返回有效内容）"

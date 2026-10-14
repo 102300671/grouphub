@@ -32,12 +32,13 @@ from .commands import auth as auth_cmd
 from .commands import help as help_cmd
 from .commands import sync as sync_cmd
 from .commands import work as work_cmd
+from .commands import render as render_cmd
 from ._lib.bots import AtSenderBot, resolve_sender_info
 
 # ------------------ 启动时构建命令注册表 ------------------
 
 _ALL_COMMANDS = (
-    work_cmd.COMMANDS + auth_cmd.COMMANDS + sync_cmd.COMMANDS + help_cmd.COMMANDS + ai_cmd.COMMANDS
+    work_cmd.COMMANDS + auth_cmd.COMMANDS + sync_cmd.COMMANDS + help_cmd.COMMANDS + ai_cmd.COMMANDS + render_cmd.COMMANDS
 )
 build_registry(_ALL_COMMANDS)
 logger.info(f"[cli_router] 命令注册表已构建：{len(_ALL_COMMANDS)} 条命令")

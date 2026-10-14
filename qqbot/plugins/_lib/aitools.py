@@ -69,6 +69,35 @@ def get_current_user_qq() -> Optional[str]:
     """工具 handler 内调用，拿到当前发起 AI 请求的用户 QQ。"""
     return _current_user_qq.get()
 
+# ------------------ 图片发送器（渲染类工具） ------------------
+# 渲染类工具（render 包）在 handler 内把图片发给当前会话：/ai 命令在
+# run_agent_turn 前注入"发送回调"（签名 async (img_bytes, filename) -> str），
+# handler 渲染后调用它发图，返回给模型的仍是文本回执。
+# 与 _current_user_qq 一样用 contextvars，随每个 /ai 请求独立隔离。
+ImageSender = Callable[[bytes, str], Awaitable[str]]
+
+_current_image_sender: "contextvars.ContextVar[Optional[ImageSender]]" = contextvars.ContextVar(
+    "aitools_current_image_sender", default=None
+)
+
+
+def set_current_image_sender(sender: Optional[ImageSender]) -> contextvars.Token:
+    """设置当前会话的图片发送器，返回 token 供 reset 用。"""
+    return _current_image_sender.set(sender)
+
+
+def reset_current_image_sender(token: contextvars.Token) -> None:
+    """还原图片发送器上下文。"""
+    _current_image_sender.reset(token)
+
+
+def get_current_image_sender() -> Optional[ImageSender]:
+    """工具 handler 内调用：拿到当前会话的图片发送器。
+
+    为 None 说明当前会话（如未走 /ai 命令）不支持发图，工具应改用文本回复。
+    """
+    return _current_image_sender.get()
+
 
 # 工具响应写日志时的预览上限（完整内容可能上千字符，避免刷屏）
 _LOG_PREVIEW = 800
