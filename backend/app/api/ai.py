@@ -21,7 +21,7 @@ from app import ai_service, models, schemas
 import time
 
 from app import renderer
-from app.storage import get_storage
+from app.storage import get_storage, public_url
 from app.zfile_client import ZFilePath
 from app.api.bot.works import _hot_scores
 from app.config import get_settings
@@ -467,7 +467,9 @@ def _upload_render_image(img: bytes, user_id: int) -> str:
         db.close()
     storage = get_storage()
     fname = f"render_{int(time.time())}.png"
-    return storage.upload_file(fname, img, path=ZFilePath.general_dir("ai", qq))
+    raw = storage.upload_file(fname, img, path=ZFilePath.general_dir("ai", qq))
+    # alist/zfile 直链是内网地址（如 localhost:5244），改写为同源可访问路径（/alist/... 或 /zfile/...）
+    return public_url(raw) or raw
 
 
 async def _render_tool_backend(kind: str, args: Dict[str, str], user_id: int) -> str:
