@@ -204,25 +204,30 @@ class AlistClient:
         if put_data.get("code") != 200:
             raise AlistError(f"alist 上传失败: {put_data.get('message')}", code=put_data.get("code", 0))
 
-        # 取直链：139 云盘对新文件同步随机（快时秒级、慢时超分钟），PUT 成功后
-        # 轮询 fs/get 实时查询（不依赖 list 目录缓存），最多等 60s，等到底不报失败。
-        full_path = urllib.parse.unquote(full_path)
+        # 取直链：AList V3 的 fs/list 带 refresh=true 会强制刷新目录缓存，
+        # 立即看到刚上传的新文件并取到 sign（前端上传后即用此参数；不带 refresh
+        # 会命中旧缓存，永远看不到新文件）。实测 PUT 后 refresh 列表一次即见。
+        parent = full_path.rsplit("/", 1)[0]
+        file_name = full_path.rsplit("/", 1)[-1]
         last_err = None
-        for attempt in range(40):
+        for attempt in range(10):
             try:
-                data = self._request("POST", "/api/fs/get", json={"path": full_path})
-                d = (data or {}).get("data") or {}
-                raw_url = d.get("raw_url") or ""
-                if raw_url:
-                    return raw_url
-                last_err = AlistError(f"alist 文件尚未同步完成（fs/get 无 raw_url）")
+                data = self._request("POST", "/api/fs/list", json={"path": parent, "refresh": True})
+                contents = (data or {}).get("content") or (data or {}).get("contents") or []
+                for item in contents:
+                    if item.get("name") == file_name:
+                        sign = item.get("sign") or ""
+                        if sign:
+                            return f"{self.base_url}/p{full_path}?sign={sign}"
+                        raise AlistError(f"alist 文件 {file_name} 缺少 sign")
+                last_err = AlistError(f"alist 父目录未找到刚上传的文件 {file_name}")
             except AlistError as e:
                 last_err = e
             except Exception as e:
-                last_err = AlistError(f"fs/get 异常: {e}")
-            if attempt < 39:
-                time.sleep(1.5)
-        raise AlistError(f"alist 上传成功但等待 60s 未同步完成: {last_err}")
+                last_err = AlistError(f"fs/list refresh 异常: {e}")
+            if attempt < 9:
+                time.sleep(0.5)
+        raise AlistError(f"alist 上传成功但获取直链失败（list refresh 重试 10 次）: {last_err}")
 
     def create_folder(self, path: str) -> None:
         """创建文件夹（如果不存在）。path 形如 /grouphub/works/123"""
