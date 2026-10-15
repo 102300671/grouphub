@@ -204,23 +204,27 @@ class AlistClient:
         if put_data.get("code") != 200:
             raise AlistError(f"alist 上传失败: {put_data.get('message')}", code=put_data.get("code", 0))
 
-        # 获取直链（云盘有同步延迟，最多重试 3 次，每次间隔 1s）
+        # 取直链：139 云盘对刚上传文件 fs/get 常返回 object not found（实时查询同步延迟），
+        # 改从父目录 fs/list（缓存）取文件 sign 拼 /p/ 直链，实测稳定（HTTP 200 image/png）。
+        parent = full_path.rsplit("/", 1)[0]
+        file_name = full_path.rsplit("/", 1)[-1]
         last_err = None
-        # 139 云盘上传后索引同步有延迟（实测 >6s），加重试并每次先 list 父目录
-        # 触发 alist 刷新缓存，再等待后重新 get。
-        for attempt in range(10):
+        for attempt in range(6):
             try:
-                return self.get_file_url(full_path)
+                data = self._request("POST", "/api/fs/list", json={"path": parent})
+                contents = (data or {}).get("content") or (data or {}).get("contents") or []
+                for item in contents:
+                    if item.get("name") == file_name:
+                        sign = item.get("sign") or ""
+                        if sign:
+                            return f"{self.base_url}/p{full_path}?sign={sign}"
+                        raise AlistError(f"alist 文件 {file_name} 缺少 sign")
+                last_err = AlistError(f"alist 父目录未找到刚上传的文件 {file_name}")
             except AlistError as e:
                 last_err = e
-                try:
-                    parent = full_path.rsplit("/", 1)[0]
-                    self._request("POST", "/api/fs/list", json={"path": parent})
-                except Exception:
-                    pass
-                if attempt < 9:
+                if attempt < 5:
                     time.sleep(1.5)
-        raise AlistError(f"alist 上传成功但获取直链失败（重试 10 次）: {last_err}")
+        raise AlistError(f"alist 上传成功但获取直链失败（list 重试 6 次）: {last_err}")
 
     def create_folder(self, path: str) -> None:
         """创建文件夹（如果不存在）。path 形如 /grouphub/works/123"""
