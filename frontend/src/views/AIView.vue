@@ -54,8 +54,8 @@ interface AIBubble {
 const bubbles = ref<Array<AIBubble>>([]);
 
 /** 把 AI 回复正文渲染为安全 HTML：先整体 HTML 转义，再仅把 markdown 图片
- *  ![alt](https?://...) 还原为 <img>（其余文本原样展示）。
- *  URL 只允许 http(s) 前缀，杜绝 javascript: 等注入。 */
+ *  ![alt](https?://... 或 /相对路径...) 还原为 <img>（其余文本原样展示）。
+ *  URL 只允许 http(s) 前缀或 / 开头的同源相对路径，杜绝 javascript: 等注入。 */
 function renderContent(text: string): string {
   if (!text) return "";
   const esc = text
@@ -64,7 +64,7 @@ function renderContent(text: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
   return esc.replace(
-    /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g,
+    /!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^)\s]+)\)/g,
     (_m, alt: string, url: string) =>
       `<img src="${url}" alt="${alt || "图片"}" class="ai-render-img" loading="lazy">`
   );
