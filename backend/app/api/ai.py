@@ -12,6 +12,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable, AsyncGenerator, Dict, List, Optional
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,7 +22,6 @@ from app import ai_service, models, schemas
 import time
 
 from app import renderer
-from app.storage import get_storage, public_url
 from app.zfile_client import ZFilePath
 from app.api.bot.works import _hot_scores
 from app.config import get_settings
@@ -456,7 +456,11 @@ _RENDER_KINDS = {
 
 
 def _upload_render_image(img: bytes, user_id: int) -> str:
-    """渲染图上传到站点存储（zfile），返回直链 URL。"""
+    """渲染图写入 backend 本地目录，返回 nginx 直出相对路径（/render/...）。
+
+    不走 alist/zfile 云盘：139 云盘对刚上传文件的索引同步延迟达分钟级，
+    fs/get 与 fs/list 都无法即时取链；本地磁盘 + nginx alias 直出即时可用。
+    """
     qq = "unknown"
     db = SessionLocal()
     try:
@@ -465,11 +469,13 @@ def _upload_render_image(img: bytes, user_id: int) -> str:
             qq = getattr(user, "qq", None) or "unknown"
     finally:
         db.close()
-    storage = get_storage()
+
+    base_dir = Path(__file__).resolve().parent.parent.parent / "render_static"
+    user_dir = base_dir / str(qq)
+    user_dir.mkdir(parents=True, exist_ok=True)
     fname = f"render_{int(time.time())}.png"
-    raw = storage.upload_file(fname, img, path=ZFilePath.general_dir("ai", qq))
-    # alist/zfile 直链是内网地址（如 localhost:5244），改写为同源可访问路径（/alist/... 或 /zfile/...）
-    return public_url(raw) or raw
+    (user_dir / fname).write_bytes(img)
+    return f"/render/{qq}/{fname}"
 
 
 async def _render_tool_backend(kind: str, args: Dict[str, str], user_id: int) -> str:
