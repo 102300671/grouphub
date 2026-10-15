@@ -450,9 +450,9 @@ def _site_add_sync(args: Dict[str, str], user_id: int) -> str:
 
 
 _RENDER_KINDS = {
-    "text": (renderer.render_text, 680),
-    "md": (renderer.render_markdown_img, 860),
-    "html": (renderer.render_html, 900),
+    "text": (renderer.render_text, 420),
+    "md": (renderer.render_markdown_img, 540),
+    "html": (renderer.render_html, 600),
 }
 
 

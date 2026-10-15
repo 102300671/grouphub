@@ -24,25 +24,34 @@ _LAUNCH_ARGS = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
 _RENDER_SEMAPHORE = asyncio.Semaphore(2)
 
 _BASE_CSS = """
-body { margin: 0; padding: 20px 24px; background: #ffffff;
+body { margin: 0; padding: 20px; background: #f3f5f8;
        font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-       color: #1f2d3d; line-height: 1.65; word-break: break-word; }
-h1 { font-size: 22px; margin: 0 0 10px; color: #1f2d3d; }
-h2 { font-size: 18px; margin: 14px 0 8px; }
-h3 { font-size: 15px; margin: 12px 0 6px; }
+       color: #1f2d3d; line-height: 1.7; word-break: break-word; }
+.card { background: #ffffff; border-radius: 16px; padding: 24px 26px;
+        border: 1px solid #e6eaf0; box-shadow: 0 4px 16px rgba(31,45,61,.07); }
+h1 { font-size: 20px; margin: 0 0 14px; padding-bottom: 10px; color: #1f2d3d;
+     border-bottom: 3px solid #3370ff; }
+h2 { font-size: 17px; margin: 16px 0 8px; color: #1f2d3d; padding-left: 10px;
+     border-left: 4px solid #3370ff; }
+h3 { font-size: 15px; margin: 14px 0 6px; color: #2c3e50; }
 p { margin: 8px 0; }
 ul, ol { margin: 8px 0; padding-left: 24px; }
-li { margin: 3px 0; }
-code { background: #f0f2f5; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-pre { background: #f6f8fa; border: 1px solid #e4e7ed; border-radius: 8px;
-      padding: 12px 14px; overflow-x: auto; }
-pre code { background: none; padding: 0; }
-blockquote { border-left: 4px solid #d3dce6; margin: 8px 0; padding: 4px 12px; color: #5d6d7e; }
-table { border-collapse: collapse; margin: 10px 0; }
-th, td { border: 1px solid #d8dee6; padding: 6px 10px; text-align: left; }
-th { background: #f0f2f5; }
+li { margin: 4px 0; }
+code { background: #eef1f5; color: #c7254e; padding: 2px 6px; border-radius: 4px;
+       font-size: 13px; }
+pre { background: #1e2a3a; color: #e6edf3; border-radius: 10px; padding: 14px 16px;
+      font-size: 13px; overflow-x: auto; }
+pre code { background: none; color: inherit; padding: 0; }
+blockquote { border-left: 4px solid #3370ff; background: #f0f5ff; margin: 10px 0;
+             padding: 10px 14px; border-radius: 0 8px 8px 0; color: #3d5a80; }
+table { border-collapse: separate; border-spacing: 0; margin: 12px 0; width: 100%;
+        border: 1px solid #e4e8ee; border-radius: 10px; overflow: hidden; }
+th { background: #3370ff; color: #ffffff; font-weight: 600; padding: 8px 12px;
+     text-align: left; font-size: 14px; }
+td { padding: 8px 12px; border-top: 1px solid #eef1f4; font-size: 14px; }
+tbody tr:nth-child(even) td { background: #f7f9fc; }
 a { color: #3370ff; }
-hr { border: none; border-top: 1px solid #e4e7ed; margin: 12px 0; }
+hr { border: none; border-top: 1px solid #e4e8ee; margin: 14px 0; }
 .text-body { white-space: pre-wrap; font-size: 15px; }
 """
 
@@ -52,7 +61,7 @@ def _wrap(inner: str, width: int) -> str:
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         f"<style>{_BASE_CSS}</style></head>"
-        f"<body style='width:{width}px'>{inner}</body></html>"
+        f"<body style='width:{width}px'><div class='card'>{inner}</div></body></html>"
     )
 
 
