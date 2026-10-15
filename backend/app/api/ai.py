@@ -456,10 +456,10 @@ _RENDER_KINDS = {
 
 
 def _upload_render_image(img: bytes, user_id: int) -> str:
-    """渲染图写入 backend 本地目录，返回 nginx 直出相对路径（/render/...）。
+    """渲染图经统一存储上传（与封面/头像同一链路），返回同源可访问路径。
 
-    不走 alist/zfile 云盘：139 云盘对刚上传文件的索引同步延迟达分钟级，
-    fs/get 与 fs/list 都无法即时取链；本地磁盘 + nginx alias 直出即时可用。
+    封面首次上传实测秒级显示，故渲染图与封面走完全相同的 storage.upload_file
+    （alist 主引擎 + 自动建父目录 + list 取 sign），保持一致体验。
     """
     qq = "unknown"
     db = SessionLocal()
@@ -469,13 +469,10 @@ def _upload_render_image(img: bytes, user_id: int) -> str:
             qq = getattr(user, "qq", None) or "unknown"
     finally:
         db.close()
-
-    base_dir = Path(__file__).resolve().parent.parent.parent / "render_static"
-    user_dir = base_dir / str(qq)
-    user_dir.mkdir(parents=True, exist_ok=True)
+    storage = get_storage()
     fname = f"render_{int(time.time())}.png"
-    (user_dir / fname).write_bytes(img)
-    return f"/render/{qq}/{fname}"
+    raw = storage.upload_file(fname, img, path=ZFilePath.general_dir("ai", qq))
+    return public_url(raw) or raw
 
 
 async def _render_tool_backend(kind: str, args: Dict[str, str], user_id: int) -> str:
