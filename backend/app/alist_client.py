@@ -206,14 +206,21 @@ class AlistClient:
 
         # 获取直链（云盘有同步延迟，最多重试 3 次，每次间隔 1s）
         last_err = None
-        for attempt in range(3):
+        # 139 云盘上传后索引同步有延迟（实测 >6s），加重试并每次先 list 父目录
+        # 触发 alist 刷新缓存，再等待后重新 get。
+        for attempt in range(10):
             try:
                 return self.get_file_url(full_path)
             except AlistError as e:
                 last_err = e
-                if attempt < 2:
-                    time.sleep(1.0)
-        raise AlistError(f"alist 上传成功但获取直链失败（重试 3 次）: {last_err}")
+                try:
+                    parent = full_path.rsplit("/", 1)[0]
+                    self._request("POST", "/api/fs/list", json={"path": parent})
+                except Exception:
+                    pass
+                if attempt < 9:
+                    time.sleep(1.5)
+        raise AlistError(f"alist 上传成功但获取直链失败（重试 10 次）: {last_err}")
 
     def create_folder(self, path: str) -> None:
         """创建文件夹（如果不存在）。path 形如 /grouphub/works/123"""
