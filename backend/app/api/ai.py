@@ -18,6 +18,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import ai_service, models, schemas
+import time
+
+from app import renderer
+from app.storage import get_storage
+from app.zfile_client import ZFilePath
 from app.api.bot.works import _hot_scores
 from app.config import get_settings
 from app.db import SessionLocal, get_db
@@ -443,6 +448,61 @@ def _site_add_sync(args: Dict[str, str], user_id: int) -> str:
         return " · ".join(parts)
 
 
+_RENDER_KINDS = {
+    "text": (renderer.render_text, 680),
+    "md": (renderer.render_markdown_img, 860),
+    "html": (renderer.render_html, 900),
+}
+
+
+def _upload_render_image(img: bytes, user_id: int) -> str:
+    """渲染图上传到站点存储（zfile），返回直链 URL。"""
+    qq = "unknown"
+    db = SessionLocal()
+    try:
+        user = db.get(models.User, user_id)
+        if user is not None:
+            qq = getattr(user, "qq", None) or "unknown"
+    finally:
+        db.close()
+    storage = get_storage()
+    fname = f"render_{int(time.time())}.png"
+    return storage.upload_file(fname, img, path=ZFilePath.general_dir("ai", qq))
+
+
+async def _render_tool_backend(kind: str, args: Dict[str, str], user_id: int) -> str:
+    content = str(args.get("content") or "").strip()
+    if not content:
+        return "错误：渲染内容为空，请提供要渲染的文本/Markdown/HTML。"
+    func, default_width = _RENDER_KINDS[kind]
+    width = _clamp_int(args.get("width") or "", default_width, 400, 2000)
+    try:
+        img = await func(content, width)
+    except Exception as exc:  # noqa: BLE001
+        return f"错误：渲染失败：{exc}。请如实告知用户，不要假装已出图。"
+    try:
+        url = await asyncio.to_thread(_upload_render_image, img, user_id)
+    except Exception as exc:  # noqa: BLE001
+        return f"错误：渲染成功但图片上传失败：{exc}。请如实告知用户。"
+    return f"已渲染为图片：{url}。回复用户时用 markdown 图片语法展示：![渲染结果]({url})"
+
+
+async def _screenshot_tool_backend(args: Dict[str, str], user_id: int) -> str:
+    url = str(args.get("url") or "").strip()
+    if not url:
+        return "错误：缺少要截图的网页地址（url 参数必填）。"
+    width = _clamp_int(args.get("width") or "", 1280, 640, 1920)
+    try:
+        img = await renderer.screenshot_url(url, width)
+    except Exception as exc:  # noqa: BLE001
+        return f"错误：网页截图失败：{exc}。请如实告知用户，或改用 web:search 检索内容。"
+    try:
+        upl = await asyncio.to_thread(_upload_render_image, img, user_id)
+    except Exception as exc:  # noqa: BLE001
+        return f"错误：截图成功但图片上传失败：{exc}。请如实告知用户。"
+    return f"已截取网页并保存为图片：{upl}。回复用户时用 markdown 图片语法展示：![网页截图]({upl})"
+
+
 def _build_tool_table(
     user_id: int, searxng_url: str
 ) -> tuple[List[_PackageSpec], List[_ToolSpec], Dict[str, Callable[[Dict[str, str]], Awaitable[str]]]]:
@@ -451,13 +511,18 @@ def _build_tool_table(
     specs: List[_ToolSpec] = []
     handlers: Dict[str, Callable[[Dict[str, str]], Awaitable[str]]] = {}
 
-    if searxng_url:
-        packages.append(
-            _PackageSpec(
-                name="web",
-                description="联网搜索：最新资讯、实时数据、近期版本/数值、你不确定的事实。",
-            )
+    packages.append(
+        _PackageSpec(
+            name="web",
+            description=(
+                "联网搜索 + 内容渲染：通过本地 SearXNG 检索网页获取最新资讯/版本信息/攻略资料；"
+                "也可把文本/Markdown/HTML 渲染成图片、对网页整页截图，图片以直链返回、"
+                "回复时用 markdown 图片语法展示。用户要求「渲染成图片/做成图片/截图/图片展示」"
+                "或回答适合用图片呈现（长文、表格、代码、网页）时，激活本包。"
+            ),
         )
+    )
+    if searxng_url:
         specs.append(
             _ToolSpec(
                 namespace="web",
@@ -469,6 +534,50 @@ def _build_tool_table(
         handlers["web:search"] = lambda args: _web_search_backend(
             str(args.get("query") or ""), searxng_url
         )
+
+    # 内容渲染与截图（不依赖 searxng；渲染图经站点存储返回直链）
+    specs += [
+        _ToolSpec(
+            namespace="web",
+            name="text",
+            description="把文本内容渲染成图片（返回 PNG 直链）。适合长文本、公告、适合整页呈现的内容。",
+            params={
+                "content": "要渲染的文本（必填）",
+                "width": "图片宽度像素（可选，默认 680）",
+            },
+        ),
+        _ToolSpec(
+            namespace="web",
+            name="md",
+            description="把 Markdown 内容渲染成图片（返回 PNG 直链）。表格、代码块、列表、标题排版适合用它。",
+            params={
+                "content": "要渲染的 Markdown 文本（必填）",
+                "width": "图片宽度像素（可选，默认 860）",
+            },
+        ),
+        _ToolSpec(
+            namespace="web",
+            name="html",
+            description="把 HTML 片段渲染成图片（返回 PNG 直链）。需要自定义样式/卡片布局时用。",
+            params={
+                "content": "要渲染的 HTML 片段（必填，需含完整 <style> 或内联样式）",
+                "width": "图片宽度像素（可选，默认 900）",
+            },
+        ),
+        _ToolSpec(
+            namespace="web",
+            name="screenshot",
+            description="截取指定网页整页为图片（返回 PNG 直链）。用户要看某个网址页面内容/外观时用。",
+            params={
+                "url": "要截图的网页地址（必填，可省略 https:// 前缀）",
+                "width": "截图宽度像素（可选，默认 1280）",
+            },
+        ),
+    ]
+    handlers["web:text"] = lambda args: _render_tool_backend("text", args, user_id)
+    handlers["web:md"] = lambda args: _render_tool_backend("md", args, user_id)
+    handlers["web:html"] = lambda args: _render_tool_backend("html", args, user_id)
+    handlers["web:screenshot"] = lambda args: _screenshot_tool_backend(args, user_id)
 
     packages.append(
         _PackageSpec(

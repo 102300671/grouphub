@@ -53,6 +53,23 @@ interface AIBubble {
 }
 const bubbles = ref<Array<AIBubble>>([]);
 
+/** 把 AI 回复正文渲染为安全 HTML：先整体 HTML 转义，再仅把 markdown 图片
+ *  ![alt](https?://...) 还原为 <img>（其余文本原样展示）。
+ *  URL 只允许 http(s) 前缀，杜绝 javascript: 等注入。 */
+function renderContent(text: string): string {
+  if (!text) return "";
+  const esc = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  return esc.replace(
+    /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g,
+    (_m, alt: string, url: string) =>
+      `<img src="${url}" alt="${alt || "图片"}" class="ai-render-img" loading="lazy">`
+  );
+}
+
 const configs = ref<AIConfig[]>([]);
 const activeId = ref<number>(0);
 const showConfig = ref(false);
@@ -976,7 +993,7 @@ const modalResponseText = computed(() => {
             >
               <i></i><i></i><i></i>
             </span>
-            <template v-if="b.content">{{ b.content }}</template>
+            <template v-if="b.content"><div class="ai-answer" v-html="renderContent(b.content)"></div></template>
           </div>
         </div>
       </div>
@@ -1361,6 +1378,8 @@ const modalResponseText = computed(() => {
   cursor: pointer;
   color: inherit;
 }
+.ai-render-img { max-width: 100%; border-radius: 8px; margin: 6px 0; display: block; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.ai-answer { white-space: pre-wrap; word-break: break-word; }
 .messages {
   flex: 1;
   overflow-y: auto;
