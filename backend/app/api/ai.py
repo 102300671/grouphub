@@ -457,10 +457,10 @@ _RENDER_KINDS = {
 
 
 def _upload_render_image(img: bytes, user_id: int) -> str:
-    """渲染图经统一存储上传（与封面/头像同一链路），返回同源可访问路径。
+    """渲染图经统一存储上传（与封面同一链路，持久保存），返回同源可访问路径。
 
-    封面首次上传实测秒级显示，故渲染图与封面走完全相同的 storage.upload_file
-    （alist 主引擎 + 自动建父目录 + list 取 sign），保持一致体验。
+    上传成功后轮询等待 139 云盘同步完成再取直链（等到底，不报失败）；
+    同步未完成时链接暂不可用，稍后/刷新加载即出图。
     """
     qq = "unknown"
     db = SessionLocal()
