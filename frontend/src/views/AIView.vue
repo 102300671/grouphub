@@ -63,10 +63,12 @@ function renderContent(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+  // 图片标记单独成行时，顺带吃掉它前后的换行：外层 .ai-answer / .bubble 是
+  // white-space: pre-wrap，残留的 \n 会被渲染成真实空行，导致图片上下大片留白。
   return esc.replace(
-    /!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^)\s]+)\)/g,
+    /[ \t]*\r?\n?[ \t]*!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^)\s]+)\)[ \t]*\r?\n?[ \t]*/g,
     (_m, alt: string, url: string) =>
-      `<a href="${url}" target="_blank" rel="noopener" title="点击查看原图"><img src="${url}" alt="${alt || "图片"}" class="ai-render-img" loading="lazy"></a>`
+      `<a class="ai-render-link" href="${url}" target="_blank" rel="noopener" title="点击查看原图"><img src="${url}" alt="${alt || "图片"}" class="ai-render-img" loading="lazy"></a>`
   );
 }
 
@@ -1378,16 +1380,36 @@ const modalResponseText = computed(() => {
   cursor: pointer;
   color: inherit;
 }
-.ai-render-img {
-  max-width: 72%;
-  border-radius: 10px;
-  margin: 8px 0;
+.ai-answer { white-space: pre-wrap; word-break: break-word; }
+/* AI 正文里的渲染图。注意：图片节点由 v-html 注入，拿不到 scoped 的
+   data-v-xxx 属性，所以必须走 :deep()，写成 `.ai-render-img {}` 只会编译成
+   `.ai-render-img[data-v-xxx]` 而永不命中（历史版本踩过这个坑，样式一直没生效）。
+   宽度交给外层 <a> 这个块容器控制：fit-content 让图片按自身尺寸展示（渲染图
+   本身只有 420/540/600px，不会撑满），再用 max-width 兜住超大截图。 */
+.ai-answer :deep(.ai-render-link) {
   display: block;
+  width: -moz-fit-content;
+  width: fit-content;
+  max-width: min(100%, 620px);
+  margin: 10px 0 12px;
+  line-height: 0; /* 去掉行内基线产生的额外留白 */
+  text-decoration: none;
+}
+.ai-answer :deep(.ai-render-img) {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 10px;
   border: 1px solid rgba(31, 45, 61, 0.08);
   box-shadow: 0 2px 10px rgba(31, 45, 61, 0.12);
-  cursor: zoom-in;
+  cursor: pointer; /* 行为是新标签页打开原图，不是页内缩放，别用 zoom-in 误导 */
 }
-.ai-answer { white-space: pre-wrap; word-break: break-word; }
+.ai-answer :deep(.ai-render-link:hover .ai-render-img) {
+  box-shadow: 0 4px 16px rgba(31, 45, 61, 0.2);
+}
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -1440,6 +1462,12 @@ const modalResponseText = computed(() => {
 .msg-row.user {
   align-self: flex-end;
   flex-direction: row-reverse;
+}
+/* 86% 上限本来是给纯文字气泡用的；带渲染图时放开到 100%，否则手机上
+   86% 气泡再套一层百分比宽度，图里的表格和正文会糊到看不清。
+   不支持 :has() 的浏览器自动退回 86%，不会破坏布局。 */
+.msg-row:has(.ai-render-img) {
+  max-width: 100%;
 }
 .avatar {
   width: 32px;
