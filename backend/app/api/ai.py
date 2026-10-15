@@ -476,8 +476,19 @@ def _upload_render_image(img: bytes, user_id: int) -> str:
     return public_url(raw) or raw
 
 
+def _normalize_render_content(s: str) -> str:
+    """AI 工具参数中的换行常以字面 \\n 形式传入（JSON 转义），归一化为真实字符，
+    否则 markdown 无法解析、渲染出 \\n 乱码。"""
+    return (
+        s.replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\r", "\n")
+        .replace("\\t", "\t")
+    )
+
+
 async def _render_tool_backend(kind: str, args: Dict[str, str], user_id: int) -> str:
-    content = str(args.get("content") or "").strip()
+    content = _normalize_render_content(str(args.get("content") or "").strip())
     if not content:
         return "错误：渲染内容为空，请提供要渲染的文本/Markdown/HTML。"
     func, default_width = _RENDER_KINDS[kind]
