@@ -66,7 +66,7 @@ function renderContent(text: string): string {
   return esc.replace(
     /!\[([^\]]*)\]\(((?:https?:\/\/|\/)[^)\s]+)\)/g,
     (_m, alt: string, url: string) =>
-      `<img src="${url}" alt="${alt || "图片"}" class="ai-render-img" loading="lazy">`
+      `<a href="${url}" target="_blank" rel="noopener" title="点击查看原图"><img src="${url}" alt="${alt || "图片"}" class="ai-render-img" loading="lazy"></a>`
   );
 }
 
@@ -1378,7 +1378,15 @@ const modalResponseText = computed(() => {
   cursor: pointer;
   color: inherit;
 }
-.ai-render-img { max-width: 100%; border-radius: 8px; margin: 6px 0; display: block; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.ai-render-img {
+  max-width: 72%;
+  border-radius: 10px;
+  margin: 8px 0;
+  display: block;
+  border: 1px solid rgba(31, 45, 61, 0.08);
+  box-shadow: 0 2px 10px rgba(31, 45, 61, 0.12);
+  cursor: zoom-in;
+}
 .ai-answer { white-space: pre-wrap; word-break: break-word; }
 .messages {
   flex: 1;
