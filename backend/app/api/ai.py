@@ -22,6 +22,7 @@ from app import ai_service, models, schemas
 import time
 
 from app import renderer
+from app.storage import get_storage, public_url
 from app.zfile_client import ZFilePath
 from app.api.bot.works import _hot_scores
 from app.config import get_settings
