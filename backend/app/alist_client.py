@@ -53,6 +53,21 @@ class AlistClient:
             return f"{prefix}/{p}"
         return f"/{p}"
 
+    def _ensure_parent_dirs(self, full_path: str) -> None:
+        """逐级创建上传路径的父目录（幂等；已存在目录 alist 返回 200）。
+
+        alist 上传前需要目标目录已存在，否则返回 permission denied。
+        """
+        parts = [p for p in full_path.lstrip("/").split("/")][:-1]
+        cur = ""
+        for part in parts:
+            cur = f"{cur}/{part}"
+            try:
+                self._request("POST", "/api/fs/mkdir", json={"path": cur})
+            except AlistError:
+                # 目录已存在或并发创建冲突：忽略，继续下一级
+                pass
+
     def _client(self) -> httpx.Client:
         if self._http is None or self._http.is_closed:
             self._http = httpx.Client(timeout=60.0)
@@ -172,6 +187,7 @@ class AlistClient:
 
         self._ensure_token()
         full_path = self._full_path(f"{path.rstrip('/')}/{file_name}")
+        self._ensure_parent_dirs(full_path)
         encoded_path = urllib.parse.quote(full_path, safe="/")
 
         put_resp = self._client().put(
