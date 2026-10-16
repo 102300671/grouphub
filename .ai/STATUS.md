@@ -23,6 +23,7 @@
 | 设备 `backend/.venv` | 已建（`python3 -m venv` 成功），已装 `requirements.txt` 全部包 |
 | 依赖缺陷 | 装完自检缺 `markdown` / `playwright`（renderer 必需）→ 已按云端生产版本补装 `Markdown==3.11.1`、`playwright==1.62.0`；`sqlmodel` 确认不需要（项目用 SQLAlchemy） |
 | 文档纠错 | R3 原"签名不校验"结论**已推翻并更正**为"签名有效但永不过期"，`FACTS.md` 增补方法论留痕 |
+| R3 根因定位 | 确切开关已找到：alist 库 `link_expiration = '0'`（配合 `sign_all = 'true'`），alist 版本 3.65.0。**不能单改这一项**——直链含 sign 会被写进消息正文，开有效期会让历史图片集体裂图，必须与"backend 读时重签"配套（详见 RISKS R3） |
 | 站点可达性 | 实测 `http://…:4173/` 通、https 与 alist https 均不通（R1 仍成立） |
 
 ## 下一步（按优先级）

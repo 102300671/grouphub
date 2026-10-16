@@ -35,8 +35,11 @@
 | 同一 URL**故意填错 sign** | `application/json`，49B，`{"code":401,…}` → **被拒** |
 | 不存在的文件名 + 垃圾 sign | 同样是 `{"code":401}` → 401 优先于 404，无法据此枚举存在性 |
 | 结论（**更正**） | alist **确实在校验签名**，直链不能无凭据抓取 |
-| alist 全局设置 | `x_setting_items.sign_all = true`（全站强制签名）；设置项里**没有**签名有效期项 |
-| sign 形态 | URL 尾部为 `…:0`，`alist_client.py` 注释自述"sign 基于文件 hash，**永不过期**" → 凭据长期有效（残留风险见 RISKS R3） |
+| alist 全局设置（实测库中值） | `sign_all = 'true'`（全站强制签名）；**`link_expiration = '0'`** ← 有效期被关闭，这才是"永不过期"的确切来源（不是我先前说的"没有该配置项"） |
+| alist 相关键全集 | 签名/有效期/链接语义相关只有 5 个键：`link_expiration`、`sign_all`、`forward_direct_link_params`、`ignore_direct_link_params`、`meta_not_found_cache_expire` |
+| alist 版本 | WebVersion **3.65.0**（`/opt/alist/alist server`，已运行约 1 天 4 小时）；二进制内置设置项里确实存在 `Sign all` 与 `Link expiration` |
+| sign 形态 | URL 尾部 `…:0` 的那个 `0` 就是过期时间戳位，与 `link_expiration=0` 对应；`alist_client.py` 注释"sign 基于文件 hash，永不过期"与此一致 |
+| 未确认项 | `x_storages` 本版本无 `name` / `additional_info` 列（查询报错），**存储级 `enable_sign` 状态未取到**，需要时走管理界面或修正 SQL 再查 |
 | `backend/app/config.py` | 无任何"站点公网基址"配置项 |
 | `public_url()` | 主动把绝对直链降级为同源相对路径（`/zfile`、`/alist`），**sign 参数原样保留** |
 
