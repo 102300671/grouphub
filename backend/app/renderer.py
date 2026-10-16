@@ -24,11 +24,9 @@ _LAUNCH_ARGS = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
 _RENDER_SEMAPHORE = asyncio.Semaphore(2)
 
 _BASE_CSS = """
-body { margin: 0; padding: 20px; background: #f3f5f8;
+body { margin: 0; padding: 26px 28px; background: #ffffff;
        font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
        color: #1f2d3d; line-height: 1.7; word-break: break-word; }
-.card { background: #ffffff; border-radius: 16px; padding: 24px 26px;
-        border: 1px solid #e6eaf0; box-shadow: 0 4px 16px rgba(31,45,61,.07); }
 h1 { font-size: 20px; margin: 0 0 14px; padding-bottom: 10px; color: #1f2d3d;
      border-bottom: 3px solid #3370ff; }
 h2 { font-size: 17px; margin: 16px 0 8px; color: #1f2d3d; padding-left: 10px;
@@ -61,7 +59,7 @@ def _wrap(inner: str, width: int) -> str:
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         f"<style>{_BASE_CSS}</style></head>"
-        f"<body style='width:{width}px'><div class='card'>{inner}</div></body></html>"
+        f"<body style='width:{width}px'>{inner}</body></html>"
     )
 
 
