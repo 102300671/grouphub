@@ -37,7 +37,7 @@
 | `ChatBackend` | 现有 httpx 流式调用 | 现有 `_chat()` |
 | `ImageSink` | 存 `render_static/` 返回 URL | 富媒体直接发当前会话 |
 | `Store` | 进程内 storage/zfile 客户端 | 走 backend `/api` |
-| `SiteDAO` | 进程内 SQLModel 查询 | 走 bot 内部接口 |
+| `SiteDAO` | 进程内 SQLAlchemy 查询 | 走 bot 内部接口 |
 
 `ImageSink` 的两种实现正是 M3 的落点：**工具产出统一的 `ImageArtifact`（含 bytes、相对路径、绝对 URL），由 sink 决定"发图"还是"给链接"**，工具本身不分支。
 

@@ -30,12 +30,19 @@
 | `http://59.110.163.88:4173/` | **200**，0.08s |
 | `https://59.110.163.88:4173/` | **不通**（000） |
 | `https://59.110.163.88:5244/` | **不通**（000） |
-| alist 渲染图直链**带 sign** | 200，`image/png`，187023B，PNG 文件头正确 |
-| 同一 URL**去掉 sign** | **200**（同样能取到图） |
-| 同一 URL**故意填错 sign** | **200** |
-| 结论 | 该目录**当前不校验签名**，任何知道路径的人可直取；sign 形同虚设（安全/合规风险，见 RISKS.md） |
+| alist 渲染图直链**带有效 sign** | `image/png`，187023B，PNG 魔数正确 → **取到真图** |
+| 同一 URL**去掉 sign** | `application/json`，51B，`{"code":401,…}` → **被拒** |
+| 同一 URL**故意填错 sign** | `application/json`，49B，`{"code":401,…}` → **被拒** |
+| 不存在的文件名 + 垃圾 sign | 同样是 `{"code":401}` → 401 优先于 404，无法据此枚举存在性 |
+| 结论（**更正**） | alist **确实在校验签名**，直链不能无凭据抓取 |
+| alist 全局设置 | `x_setting_items.sign_all = true`（全站强制签名）；设置项里**没有**签名有效期项 |
+| sign 形态 | URL 尾部为 `…:0`，`alist_client.py` 注释自述"sign 基于文件 hash，**永不过期**" → 凭据长期有效（残留风险见 RISKS R3） |
 | `backend/app/config.py` | 无任何"站点公网基址"配置项 |
-| `public_url()` | 主动把绝对直链降级为同源相对路径（`/zfile`、`/alist`） |
+| `public_url()` | 主动把绝对直链降级为同源相对路径（`/zfile`、`/alist`），**sign 参数原样保留** |
+
+> ⚠️ **方法论留痕（本文件曾经写错过）**：alist 对失败请求返回的是 **HTTP 200 + JSON 错误体**，不是 401/404 状态码。
+> 只看 `curl -w "%{http_code}"` 会把"签名无效"误判成"图片可任意抓取"，本文件初版就是这么错的（16:12 版）。
+> **判定规则：验证资源可达性必须同时看 `content-type` 与响应体魔数/前缀，状态码单独不可信。** V2/V1 已按此口径执行。
 
 ## QQ 开放平台约束（检索到的文档口径，需 M0 实测复核）
 
@@ -51,6 +58,15 @@
 ## 前端依赖现状
 
 `package.json` 运行时依赖仅 `axios` / `pinia` / `vue` / `vue-router`，node_modules 中**没有** markdown-it、marked、dompurify、highlight.js、sanitize 任何一项 → D3 需要新增渲染器与 sanitizer 依赖。
+
+## backend 依赖清单缺陷（设备实测复现）
+
+设备上新建 `backend/.venv` 并按 `backend/requirements.txt` 安装后，自检缺失 **`markdown` 与 `playwright`** —— 而这两个恰是 `app/renderer.py` 的必需依赖，即**照 requirements 装出来的环境跑不了任何渲染**。
+
+- 云端生产 venv 实际版本（对齐基准）：`Markdown 3.11.1`、`playwright 1.62.0`、`fastapi 0.141.1`、`uvicorn 0.53.0`、`httpx 0.28.1`
+- 设备已补装 `Markdown==3.11.1` + `playwright==1.62.0`，与云端浏览器缓存 `chromium-1234` 匹配
+- `sqlmodel` **不需要**（`app/models.py` 用的是 `sqlalchemy` + `declarative_base`，云端生产 venv 也没装 sqlmodel）
+- 待办：把 `markdown` / `playwright` 写进 `requirements.txt`（建议带版本上限，与云端对齐），否则下次重装仍会踩坑
 
 ## 现存 6 处漂移（待统一时逐一消除）
 

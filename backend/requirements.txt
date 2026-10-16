@@ -24,3 +24,7 @@ beautifulsoup4
 lxml
 olefile
 striprtf
+
+# 渲染链路（app/renderer.py 必需，勿删；版本与云端生产 venv 对齐）
+Markdown==3.11.1
+playwright==1.62.0

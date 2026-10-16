@@ -65,7 +65,7 @@ class ImageArtifact:
 - 工具**只允许**通过 ports 触达宿主；出现 `import fastapi` / `import nonebot` 即为违规。
 - `ChatBackend`：只负责"发一轮模型请求，返回文本 + 思维链分片回调"，不含工具逻辑。
 - `ImageSink`：D3 未落地前，Web 实现返回 `rel_url`、QQ 实现直接发图并返回文本回执；切换只改这里。
-- `SiteDAO` / `Store`：QQ 端保持现有 HTTP 走 `/bot/ai/*`，backend 端保持进程内 SQLModel。
+- `SiteDAO` / `Store`：QQ 端保持现有 HTTP 走 `/bot/ai/*`，backend 端保持进程内 SQLAlchemy。
 
 ---
 
