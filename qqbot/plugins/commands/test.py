@@ -13,12 +13,13 @@ QQ 开放平台官方口径（发送群聊消息 / 消息收发概述）：
 `40034128`；第二轮 12 条更早挂。适配器的 `event._reply_seq` 递增是对的
 （`msg_seq` 照官方要求递增），**问题纯粹是次数上限**。
 
-于是拆成 4 组，每组 ≤ 5 条：
+于是拆成 5 组，每组 ≤5 条：
 
     /test      ① 图片段 URL 直发（+ 其它组提示）
     /test 2    ② markdown 段（富文本渲染能力）
     /test 3    ②b 嵌图对照（4 个直链变体，带转存校验）
     /test 4    ③ 纯文本 markdown 源码 + ④ 观察清单
+    /test 5    ②c 尺寸提示对照（官方图片语法 `![alt #Wpx #Hpx](url)`）
 
 ## ②b 为什么用 force_verify_image_resource
 
@@ -57,6 +58,22 @@ _EMBED_VARIANTS = (
     ("D 外部公网 https（与本机无关的对照组）", "https://www.python.org/static/img/python-logo.png"),
 )
 
+# ── 第三轮：官方图片语法要带尺寸提示 `![alt #Wpx #Hpx](url)` ──
+# 官方 markdown 文档里唯一那张图片示例就是 `![text #208px #320px](url)`；
+# 腾讯自家 openclaw-qqbot 插件也专门把标准 `![alt](url)` 转成这个格式
+# （用 HTTP Range 拉前 64KB 解析图片头拿尺寸）。
+# 假设：**手机端严格按官方语法解析，缺尺寸提示 → 渲染失败 → 降级成 alt 文本**；
+#       电脑端有 fallback 能自己取尺寸，所以能显示。
+# 这组变体把「尺寸因素」和「备案因素」交叉开：
+#   E vs H → 同 URL，只差尺寸提示   → 隔离尺寸因素
+#   E vs G → 都带尺寸，只差域名     → 隔离备案因素
+_EMBED_VARIANTS_SIZE = (
+    ("E 裸IP + 尺寸提示 #480px #480px", f"{IMAGE_URL}", 480, 480),
+    ("F 外部https + 尺寸提示 #580px #164px", "https://www.python.org/static/img/python-logo.png", 580, 164),
+    ("G 域名http + 尺寸提示 #480px #480px", "http://jianying.run.place/m0test/blocks.png", 480, 480),
+    ("H 裸IP + 无尺寸提示（对照，应复现手机端 [alt]）", f"{IMAGE_URL}", None, None),
+)
+
 TEST_COMMAND = Command(
     ns_en="test",
     ns_zh="测试",
@@ -71,7 +88,7 @@ TEST_COMMAND = Command(
 
 COMMANDS = (TEST_COMMAND,)
 
-_GROUPS_HINT = "其余组：/test 2（markdown段）· /test 3（嵌图对照）· /test 4（纯文本）"
+_GROUPS_HINT = "其余组：/test 2（markdown段）· /test 3（嵌图对照）· /test 4（纯文本）· /test 5（尺寸提示对照）"
 
 
 # ------------------ 适配器差异 ------------------
@@ -213,6 +230,24 @@ def _embed_variant_md(label: str, url: str) -> str:
     )
 
 
+def _embed_variant_md_size(label: str, url: str, w: int | None, h: int | None) -> str:
+    """第三轮变体：带 / 不带**尺寸提示**的官方图片语法。
+
+    官方格式：`![text #208px #320px](url)` —— alt 后跟 `#宽px #高px`。
+    """
+    if w and h:
+        img = f"![t #{w}px #{h}px]({url})"
+    else:
+        img = f"![t]({url})"
+    return "\n".join(
+        [
+            f"**②c 尺寸提示对照 · {label}**",
+            "",
+            img,
+        ]
+    )
+
+
 def _text_source(url: str) -> str:
     """③ 的纯文本源码（markdown 语法原样发出，看 QQ 自己会不会解析）。"""
     return "\n".join(
@@ -324,6 +359,36 @@ async def _group_text(bot: Bot, event: Event) -> None:
     )
 
 
+async def _group_embed_size(bot: Bot, event: Event) -> None:
+    """②c 尺寸提示对照：把"尺寸因素"和"备案因素"交叉开。
+
+    判读：
+      - **E 出图、H 不出**（同 URL 只差尺寸提示）→ **手机端不渲染是因为缺尺寸提示**，
+        官方语法 `![alt #Wpx #Hpx](url)` 才是正解 → M4 走 markdown 嵌图 + 自动带尺寸
+      - **E 出图、G 不出**（都带尺寸，只差域名）→ 未备案域名仍然不行，得换域名
+      - **E/G 都出** → 尺寸提示 + 备案两个因素叠加，B/C 之前失败是两者叠加
+    """
+    results = []
+    for label, url, w, h in _EMBED_VARIANTS_SIZE:
+        ok, note = await _send_md_force_verify(
+            bot, event, _embed_variant_md_size(label, url, w, h)
+        )
+        results.append((label, ok, note))
+
+    lines = [
+        "②c 尺寸提示对照（官方图片语法是 `![alt #宽px #高px](url)`）：",
+        "",
+        "· **E vs H** 同一个 URL，只差有没有尺寸提示 → 隔离「尺寸因素」",
+        "· **E vs G** 都带尺寸，只差域名 → 隔离「备案因素」",
+        "",
+    ]
+    for label, ok, note in results:
+        lines.append(f"· {label}\n  {'✅ ' if ok else '❌ '}{note}")
+    lines.append("")
+    lines.append(_GROUPS_HINT)
+    await bot.send(event, "\n".join(lines))
+
+
 # ------------------ 命令主体 ------------------
 
 
@@ -336,11 +401,14 @@ async def test(bot: Bot, event: Event, result: ParseResult) -> None:
         await _group_md(bot, event)
     elif group in ("3", "c", "embed", "嵌图"):
         await _group_embed(bot, event)
+    elif group in ("5", "e", "size", "尺寸"):
+        await _group_embed_size(bot, event)
     elif group in ("4", "d", "text", "纯文本"):
         await _group_text(bot, event)
     else:
         await bot.send(
             event,
             f"⚠️ 没有第 {group} 组。\n\n"
-            "/test（图片段）· /test 2（markdown段）· /test 3（嵌图对照）· /test 4（纯文本）",
+            "/test（图片段）· /test 2（markdown段）· /test 3（嵌图对照）· "
+            "/test 4（纯文本）· /test 5（尺寸提示对照）",
         )
