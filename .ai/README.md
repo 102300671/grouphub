@@ -38,12 +38,16 @@
 4. **PRoot 陷阱**：命令管道接 `head` 会报 `Function not implemented`；`ps` 的 `lstart` 全是假值只看 `etime`；`ss`/`netstat` 不可用，端口探测用 `nc -z` 或 `curl`；`git fetch` 会报 `packed-refs: Function not implemented`，网络类 git 操作必须加 `timeout` 与 `GIT_SSH_COMMAND="ssh -o BatchMode=yes"`。
 5. 本地跑 playwright 出图**必须**加 `--use-gl=swiftshader`，否则卡死（已实测，详见 `FACTS.md`）。
 6. 改任何渲染相关代码，必须同时核对 Web 端与 QQ 端两端表现，只验一端不算完成。
+   **M0 又补了一条同性质的纪律**：QQ 端内部还要**手机端 + 电脑端各看一遍** ——
+   markdown 里的图片在手机端和电脑端表现可能不同（缺尺寸提示时手机端只显示 alt 文本）。
+   凡"能不能显示"的结论，**必须两端都看**（见 `VERIFY.md` V0）。
 
 ## 文档索引
 
 | 文件 | 内容 | 什么时候读 |
 |---|---|---|
 | `STATUS.md` | **进度看板**：做到哪了、下一步是什么 | 每次接手第一读 |
+| `M0-markdown-可行性实测.md` | **M0 阶段完整实测记录**（三轮原始数据、官方文档依据、结论与踩坑留痕） | 动 QQ 端图片/markdown 前 |
 | `DECISIONS.md` | 4 项架构决策及被否方案 | 想改设计方向前 |
 | `ARCHITECTURE.md` | 现状与目标架构、分层与模块职责 | 写代码前 |
 | `CONTRACT.md` | 共享包接口契约（结构体、命名、错误约定） | 实现模块时 |
