@@ -1,6 +1,6 @@
 # 进度看板
 
-最后更新：2026-10-16 16:34（Asia/Shanghai）　更新本文件是每次收工的硬性动作。
+最后更新：2026-10-26 09:40（Asia/Shanghai）　更新本文件是每次收工的硬性动作。
 
 ## 阶段状态
 
@@ -8,7 +8,7 @@
 |---|---|---|
 | 现状勘察 | ✅ 完成 | 两端工具链路差异、6 处漂移已查清（`FACTS.md` / `RISKS.md`） |
 | 设计决策 | ✅ **已批准** | 用户 16:24 回复"还可以"，D1–D4 生效；`.ai/` 已入库 |
-| M0 前置核实 | ⬜ **下一步** | 需实测 QQ markdown 嵌图 / 代码块支持，涉及向 QQ 沙箱群发消息（对外操作，需用户配合或授权） |
+| M0 前置核实 | 🟡 **测试就绪，待实测** | 临时 `/test` 命令已上线生产机器人；谁 @机器人 发 `/test`，机器人把 4 组测试内容回发给发命令的那个人。**待用户实测后回报结论**（详见下节） |
 | M1 建共享包 | ⬜ 未开始 | 依赖 M0 排期，不阻塞开工 |
 | M2 backend 接入 | ⬜ 未开始 | |
 | M3 双协议+判定 | ⬜ 未开始 | |
@@ -26,18 +26,46 @@
 | R3 根因定位 | 确切开关已找到：alist 库 `link_expiration = '0'`（配合 `sign_all = 'true'`），alist 版本 3.65.0。**不能单改这一项**——直链含 sign 会被写进消息正文，开有效期会让历史图片集体裂图，必须与"backend 读时重签"配套（详见 RISKS R3） |
 | 站点可达性 | 实测 `http://…:4173/` 通、https 与 alist https 均不通（R1 仍成立） |
 
+## 2026-10-26 轮：M0 测试通道就绪（`/test` 上线生产）
+
+上一版（本文件 10-16 版）列的 M0 阻塞是"需要向 QQ 沙箱群发测试消息，属对外操作"。
+本轮用**临时命令**绕开了这个阻塞：**谁给机器人发 `/test`，机器人就把测试内容回发给那个人**——
+不刷屏、不指定群、每个人各自看到各自的结果。
+
+| 动作 | 结果 |
+|---|---|
+| 新增 `qqbot/plugins/commands/test.py` | 临时命令，4 组测试内容（① 图片段 URL 直发 / ② markdown 段 / ③ 纯文本 markdown 源码 / ④ 观察清单） |
+| `qqbot/plugins/cli_router.py` | 注册 `test_cmd.COMMANDS`，命令表 **18 → 19 条**（重启日志实测） |
+| 测试图直链 | 云服务器 `59.110.163.88` 的 nginx `/var/www/html/m0test/`：`blocks.png`（480×480 四色块，2.0 KB，肉眼易辨认）+ `render1/2.png`（AI 渲染图，26 KB / 24 KB）。**公网可达已实测**（外网 curl 200 + `image/png`） |
+| 部署 | 云端 pull → `systemctl restart grouphub-qqbot` → `active`，`NRestarts=0`，日志「命令注册表已构建：19 条命令」 |
+| 提交 | `cb2a9cf`（连同此前压着的 3 个 `docs(ai)` 提交一并推送，`0b1f1a1..cb2a9cf`） |
+
+**为什么测试图必须放云服务器**：手机 proot 在 NAT 后面，QQ 服务端拉不到它的地址。
+`QQSegment.image(url)` 走 `msg_type=7` + `{"file_type":1,"url":...}`，**由 QQ 服务器自己去拉**，
+所以直链必须公网可达。`M0_TEST_IMAGE` 环境变量可覆盖。
+
+**适配器差异（实测自 nonebot-adapter-qq 源码）**：`markdown` 段 → `msg_type=2`，
+是 QQ **频道**的能力；`image` 段 → `msg_type=7`。两者在同一条消息里会互相顶掉
+（`msg_type` 单值），所以测试内容必须**分条发**。OneBot v11 通道没有 `markdown` 段，命令会自动跳过 ②。
+
+**既有告警（与本轮无关）**：`nonebot_plugin_htmlrender` 导入失败
+（`RenderPluginConfig` pydantic 校验错）——10-24 开机日志里同样有，属旧账。
+项目自己的 `/渲染` 走 playwright，不依赖该插件。
+
 ## 下一步（按优先级）
 
-1. **M0 前置核实**：QQ markdown 嵌图实测（需要向沙箱群发测试消息——属对外操作，请用户确认由谁发、发哪个群）。
-2. 把 `markdown` / `playwright` 写进 `backend/requirements.txt`（否则下次重装仍踩坑），单独一次小提交。
+1. **M0 前置核实**：用户 @机器人 发 `/test`，回报 4 组内容的实际显示效果（截图最直观）。
+   结论回填 `FACTS.md`，然后**删掉 `qqbot/plugins/commands/test.py` + `cli_router.py` 的注册行**（临时命令，验完即删）。
+2. ~~把 `markdown` / `playwright` 写进 `backend/requirements.txt`~~ —— **已完成**（`0a69b61` 已写入 `Markdown==3.11.1` / `playwright==1.62.0`），本文件上一版此处已过期。
 3. R3 处置：先实测"alist 设置签名有效期后，旧 `:0` 链接是否仍可用"，再决定改配置还是后端按需重签。**属线上配置，需用户确认**。
-4. `.ai/` 与后续提交是否推送远端（决定云端能否拉到）。
+4. ~~`.ai/` 与后续提交是否推送远端~~ —— **已完成**（`cb2a9cf` 已推 `origin/main`，云端已 pull）。
 
 ## 已知未完成/待清理
 
 - 设备上有两个 9 月遗留备份未跟踪：`deploy/proxy_failover.py.bak.20260924`、`frontend/vite.config.ts.bak.20260924`。
 - 云端 `npm audit` 报 2 个 high 级别漏洞，未处理。
 - 设备 `backend/.venv` 目前无法完整启动后端服务验证（依赖已齐，但缺 `backend/.env` 配置：`config.py` 无站点基址、`PORT` 未设）。
+- **`/test` 是临时命令，验完必须删**（`qqbot/plugins/commands/test.py` + `cli_router.py` 的 import 与注册行）。
 
 
 ## 已完成的相关改动（同一条线索的前置工作）
