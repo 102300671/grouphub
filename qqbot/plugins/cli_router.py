@@ -33,13 +33,12 @@ from .commands import help as help_cmd
 from .commands import sync as sync_cmd
 from .commands import work as work_cmd
 from .commands import render as render_cmd
-from .commands import test as test_cmd  # 【临时】M0 通道渲染测试，验完删除
 from ._lib.bots import AtSenderBot, resolve_sender_info
 
 # ------------------ 启动时构建命令注册表 ------------------
 
 _ALL_COMMANDS = (
-    work_cmd.COMMANDS + auth_cmd.COMMANDS + sync_cmd.COMMANDS + help_cmd.COMMANDS + ai_cmd.COMMANDS + render_cmd.COMMANDS + test_cmd.COMMANDS  # 【临时】test_cmd 验完即删
+    work_cmd.COMMANDS + auth_cmd.COMMANDS + sync_cmd.COMMANDS + help_cmd.COMMANDS + ai_cmd.COMMANDS + render_cmd.COMMANDS
 )
 build_registry(_ALL_COMMANDS)
 logger.info(f"[cli_router] 命令注册表已构建：{len(_ALL_COMMANDS)} 条命令")
