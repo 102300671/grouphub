@@ -31,6 +31,11 @@
 | 行为等价验证 | 48 个工具用例 + 22 个协议用例 + 3 段 prompt（1095/593/831 字符）**全部逐字一致** |
 | 插件冒烟 | 设备 `nonebot.init() + load_from_toml()` → 插件全部加载成功，**命令表 18 条**，8 个工具注册齐全 |
 | 老 bug 修复 | `/ai` 必抛 `TypeError: _chat_once() got an unexpected keyword argument 'on_reasoning'` —— **该成功路径从未跑通过**（详见 FACTS） |
+| 云端部署 | `git pull` → `9e4ed54` → `systemctl restart grouphub-qqbot` → `active`、`NRestarts=0`、日志「命令注册表已构建：18 条命令」 |
+| 云端单测 | 同一套 37 用例在云端 `qqbot/.venv` 也全绿 |
+| 云端端到端 | 假模型服务 → 真实 `_chat` → 真实 `site:hot` → **真实 backend** → 回灌 → 最终回答，**无 TypeError** |
+| 真实模型实测 | `agnes-3.0-flash` 跑通两阶段（`pkg:activate name=site` → `site:hot` → 带作品链接的最终回答）—— `/ai` 自 `6a6586d` 以来第一次真跑通 |
+| 渲染类 3 工具 | **既有旧账**（两端都不可用，M1 未改变）：云端 `RENDER__STARTUP=lazy` 非法、设备的 htmlrender 缺自己的 chromium。`web:screenshot` 与其余 4 个工具实测可用（5/8）。修法两条待用户拍板（见 FACTS） |
 
 **没有做（有意留到 M2）**：backend 侧不动（`backend/app/api/ai.py` 仍是旧的两份私有实现）；
 漂移 1/3/4/5/6 的彻底关闭归 M2（共享包已把 qqbot 侧收干净）。
@@ -110,6 +115,9 @@ M0 实测做完、代码也推了，但**只写了 `FACTS.md` 与 `STATUS.md`**�
 
 ## 下一步（按优先级）
 
+0. **【待用户拍板】渲染类 3 个工具（`web:text`/`web:md`/`web:html`）与 `/渲染` 命令的修法**：
+   环境侧改云端 `RENDER__STARTUP` + 给 htmlrender 装浏览器，**或**代码侧改走项目自带 playwright 直连
+   （与 backend 渲染器统一，顺带收掉漂移 2）。两者都动线上/共享代码，未擅自执行。
 1. **M2 backend 接入共享包**（M1 之后的下一个阶段）：`backend/app/api/ai.py` 里的正则解析 +
    内联循环替换为共享包，Web 端实现自己的 ports（`Renderer` / `SearchBackend` / `SiteDAO` /
    `ImageSink`）。**M2 会真正改变 Web 端的行为**（漂移 1/3/4/5/6 关闭：手册文案统一成

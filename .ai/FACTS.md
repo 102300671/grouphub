@@ -323,6 +323,42 @@
 而 QQ 官方文档与 M0 实测用的是 `![alt #800px #600px](url)`（`#宽px #高px`）。
 **本实现以官方文档为准**（`format_markdown_image`），M0 已实测 `#480px #480px` 手机端正常出图。
 
+### 云端部署与真机链路实测（2026-10-26 15:41–15:45）
+
+| 项 | 值 |
+|---|---|
+| 云端 HEAD | `9e4ed54`（与设备、GitHub 三向一致） |
+| 服务状态 | `active`，`NRestarts=0`，`ActiveEnterTimestamp=15:41:27` |
+| 启动日志 | 「[ai] 已注册工具包：web, site（工具：8 个）」+「命令注册表已构建：18 条命令」 |
+| 云端单测 | `qqbot/.venv/bin/python -m unittest discover -s shared/tests -t .` → **37 passed** |
+| 端到端（假模型） | 假 OpenAI 兼容服务 → 真实 `_chat` → 真实 `site:hot` → **真实 backend**（返回《捡到女主少年时》）→ 回灌 → 最终回答，**无 TypeError** |
+| 端到端（真实模型） | `agnes-3.0-flash` 两阶段跑通：`pkg:activate name=site` → `site:hot limit=10` → 最终回答带作品链接 `http://59.110.163.88:4173/works/1` |
+
+> 真实模型那次是 `/ai` 自 `6a6586d` 以来**第一次真正跑通**（此前每次调用都抛 TypeError）。
+> 旧的 `pkg:activate → 工具 → 回灌` 两阶段流程与新实现完全一致。
+
+### ⚠️ 渲染类 3 个工具在两端都不可用（**既有旧账，M1 未改变**）
+
+| 端 | 现象 | 根因 |
+|---|---|---|
+| 云端 | `nonebot_plugin_htmlrender` 插件**加载失败**（开机日志既有告警） | `qqbot/.env.prod` 里 `RENDER__STARTUP=lazy` 不在 0.8.x 允许值（`off`/`warmup`/`probe`）→ `RenderPluginConfig` 校验错 |
+| 设备 | 插件能加载，但报 `Capability 'render_text' is not available in this composition` | 0.8.1 的 playwright provider 要**它自己那份**浏览器（`/root/.local/share/nonebot2/nonebot_plugin_htmlrender/chromium_headless_shell-1234`），设备上没装；设备只有系统 playwright 的 `/root/.cache/ms-playwright/chromium-1234` |
+
+**M1 前后完全一致**：`qqbot/plugins/_lib/renderer.py` 本次**一个字都没改**（不在 git diff 里），
+旧的 `_ai_render` 调的就是同一个 `render_text_img` → 报同样的错。
+共享包只是把它包成了工具错误文本（`错误：渲染失败：…请如实告知用户，或改用文本回复。`），
+模型会照着改用文本回复 —— **这正是设计要的降级行为**。
+
+**不受影响（实测可用）**：`web:screenshot`（playwright 直连，云端出图 154803 B）✓、
+`web:search`（SearXNG 8888）✓、`site:hot` / `site:search` / `site:add`（backend 8003）✓
+→ **5/8 工具实测可用**；缺的 3 个是 `web:text` / `web:md` / `web:html`（连同 `/渲染` 命令）。
+
+**修法两条（都需用户拍板，不在 M1 范围）**：
+1. **环境侧**：云端把 `RENDER__STARTUP` 改成合法值，并给 htmlrender 装它自己的 chromium；
+2. **代码侧**（更贴合"两端渲染后端统一"这条漂移）：让 qqbot 的文本/Markdown/HTML 渲染也走
+   **项目自带的 playwright 直连**（像 `screenshot_url` 那样用 `/root/.cache/ms-playwright` 的 chromium），
+   不再依赖 htmlrender 插件 —— 这与 backend 自写 playwright 渲染器（漂移 2）正好合并处理。
+
 ### 共享包的其它落地事实
 
 - 共享包**不 import nonebot**：日志用标准库 `logging`；QQ 端在 `aitools_host.py` 里做 loguru 桥接
