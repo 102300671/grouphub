@@ -35,6 +35,7 @@
 | 云端单测 | 同一套 37 用例在云端 `qqbot/.venv` 也全绿 |
 | 云端端到端 | 假模型服务 → 真实 `_chat` → 真实 `site:hot` → **真实 backend** → 回灌 → 最终回答，**无 TypeError** |
 | 真实模型实测 | `agnes-3.0-flash` 跑通两阶段（`pkg:activate name=site` → `site:hot` → 带作品链接的最终回答）—— `/ai` 自 `6a6586d` 以来第一次真跑通 |
+| 回滚点 | 已打 tag **`pre-m1`**（指向 M1 前的 `5cd88f5`，已推远端）—— 要退回旧实现：`git checkout pre-m1 -- qqbot/ && git checkout pre-m1 -- .ai/` 后重排 |
 | 渲染类 3 工具 | **既有旧账**（两端都不可用，M1 未改变）：云端 `RENDER__STARTUP=lazy` 非法、设备的 htmlrender 缺自己的 chromium。`web:screenshot` 与其余 4 个工具实测可用（5/8）。修法两条待用户拍板（见 FACTS） |
 
 **没有做（有意留到 M2）**：backend 侧不动（`backend/app/api/ai.py` 仍是旧的两份私有实现）；

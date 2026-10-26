@@ -283,7 +283,7 @@
 
 | 项 | 值 |
 |---|---|
-| M1 前 HEAD | `5cd88f5`（三向一致） |
+| M1 前 HEAD | `5cd88f5`（三向一致）；**回滚 tag `pre-m1`** 已打并推远端 |
 | 删除 | `qqbot/plugins/_lib/aitools.py`（md5 `846e31db53354f3970d85bbbe3fcc9dc`，607 行）——原样留档在 git 历史 |
 | 新增 | `qqbot/plugins/_lib/aitools_host.py`（md5 `369aab529bf5c5f5ccd46be375fc4e85`）——QQ 侧 ports 实现 |
 | 新增 | `shared/aitools/` 全套（`__init__` `cbf4f7ba…` / `registry` `e065a6e3…` / `loop` `e7f7bcff…` / `prompt` `728b990d…` / `ports` `2844b722…` / `agent` `ec6e3f9a…` / `errors` `8019c93c…` / `logs` `6ad272e4…` / `tools/web` `62361ec0…` / `tools/site` `58d768b0…` / `protocol/textcodec` `2dd62b7d…` / `imagesize` `1a5138cb…`） |
