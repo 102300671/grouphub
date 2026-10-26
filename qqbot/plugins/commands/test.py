@@ -135,7 +135,12 @@ async def _send_md_force_verify(bot: Bot, event: Event, content: str) -> tuple[b
 
     try:
         token = await raw.get_access_token()
-        url = raw.adapter.get_api_base() / "v2" / "groups" / group_openid / "messages"
+        # ⚠️ 适配器的 get_api_base() 返回的是 **yarl.URL**，httpx 只认 str / httpx.URL，
+        #    直接传 yarl.URL 会报 "Invalid type for url. Expected str or http.URL"。
+        #    必须先转成 str 再交给 httpx。
+        url = httpx.URL(
+            str(raw.adapter.get_api_base() / "v2" / "groups" / group_openid / "messages")
+        )
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post(
                 url,
@@ -150,12 +155,13 @@ async def _send_md_force_verify(bot: Bot, event: Event, content: str) -> tuple[b
             )
         data = resp.json()
     except Exception as exc:  # noqa: BLE001
-        return False, f"请求异常：{exc}"
+        return False, f"请求异常：{type(exc).__name__}: {exc}"
 
     if resp.status_code != 200:
         return False, f"HTTP {resp.status_code} {data.get('message', '')}"
-    if data.get("code"):
-        return False, f"平台报错 code={data['code']} {data.get('message', '')}"
+    code = data.get("code")
+    if code not in (None, 0):
+        return False, f"平台报错 code={code} {data.get('message', '')}"
     return True, "已发出（图片转存成功，应该能看到图）"
 
 
