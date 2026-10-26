@@ -6,18 +6,17 @@
   /渲染 html <内容>     HTML 转图片
   /渲染 网页 <url>      网页整页截图
 
-AI 工具（web 包内）：web:text / web:md / web:html / web:screenshot，与 web:search 同一工具包。
-由 /ai 会话按需调用：渲染成功后图片直接发到当前会话（经 aitools 注入的
-图片发送器），模型收到文本回执后简短收尾即可，无需重复图片全文。
+AI 会话用的同名工具（web:text / web:md / web:html / web:screenshot）已搬到
+仓库根 shared/aitools/，与 Web 端共用一份实现；渲染宽度与下面的命令共用
+RENDER_WIDTHS 一处真源。
 """
 from __future__ import annotations
-
-from typing import Any, Dict, Optional
 
 from nonebot import logger
 from nonebot.adapters import Bot, Event
 
-from .._lib import aitools
+from shared.aitools.tools.web import RENDER_WIDTHS
+
 from .._lib.cli import Command, CommandError, Option, ParseResult
 from .._lib.renderer import (
     render_html_img,
@@ -99,7 +98,7 @@ async def text(bot: Bot, event: Event, result: ParseResult) -> None:
     content = _content(result)
     width = result.get("width") or 0
     try:
-        img = await render_text_img(content, width=width or 680)
+        img = await render_text_img(content, width=width or RENDER_WIDTHS["text"])
     except Exception as exc:  # noqa: BLE001
         logger.exception("[render] 文本渲染失败")
         raise CommandError(f"文本渲染失败：{exc}") from exc
@@ -110,7 +109,7 @@ async def md(bot: Bot, event: Event, result: ParseResult) -> None:
     content = _content(result, "Markdown 内容")
     width = result.get("width") or 0
     try:
-        img = await render_md_img(content, width=width or 860)
+        img = await render_md_img(content, width=width or RENDER_WIDTHS["md"])
     except Exception as exc:  # noqa: BLE001
         logger.exception("[render] Markdown 渲染失败")
         raise CommandError(f"Markdown 渲染失败：{exc}") from exc
@@ -121,7 +120,7 @@ async def html(bot: Bot, event: Event, result: ParseResult) -> None:
     content = _content(result, "HTML 内容")
     width = result.get("width") or 0
     try:
-        img = await render_html_img(content, width=width or 900)
+        img = await render_html_img(content, width=width or RENDER_WIDTHS["html"])
     except Exception as exc:  # noqa: BLE001
         logger.exception("[render] HTML 渲染失败")
         raise CommandError(f"HTML 渲染失败：{exc}") from exc
@@ -138,119 +137,3 @@ async def screenshot(bot: Bot, event: Event, result: ParseResult) -> None:
         logger.exception("[render] 网页截图失败")
         raise CommandError(f"网页截图失败：{exc}") from exc
     await send_image(bot, event, img, "网页截图.png")
-
-
-# ------------------ AI 工具（并入 web 包） ------------------
-
-
-async def _ai_render(kind: str, args: Dict[str, str]) -> str:
-    """render:text / md / html 公共实现：渲染 → 发图 → 返回文本回执。"""
-    content = (args.get("content") or args.get("text") or "").strip()
-    sender = aitools.get_current_image_sender()
-    if sender is None:
-        return "错误：当前会话不支持发送图片，请直接用文本回复用户。"
-
-    width = 0
-    raw_w = (args.get("width") or "").strip()
-    if raw_w:
-        try:
-            width = int(raw_w)
-        except ValueError:
-            width = 0
-
-    if not content:
-        return "错误：缺少必填参数 content（要渲染的内容）。"
-
-    try:
-        if kind == "text":
-            img = await render_text_img(content, width=width or 680)
-            filename = "渲染文本.png"
-        elif kind == "md":
-            img = await render_md_img(content, width=width or 860)
-            filename = "渲染Markdown.png"
-        else:  # html
-            img = await render_html_img(content, width=width or 900)
-            filename = "渲染HTML.png"
-    except Exception as exc:  # noqa: BLE001
-        logger.exception(f"[ai render:{kind}] 渲染失败")
-        return f"错误：渲染失败：{exc}。请如实告知用户，或改用文本回复。"
-
-    try:
-        note = await sender(img, filename)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("[ai render] 图片发送失败")
-        return f"错误：渲染成功但图片发送失败：{exc}。请如实告知用户，或改用文本回复。"
-
-    return f"已把内容渲染为图片并{note}。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。"
-
-
-async def _ai_screenshot(args: Dict[str, str]) -> str:
-    """render:screenshot 工具：网页整页截图 → 发图 → 返回文本回执。"""
-    url = (args.get("url") or "").strip()
-    sender = aitools.get_current_image_sender()
-    if sender is None:
-        return "错误：当前会话不支持发送图片，请直接用文本回复用户。"
-    if not url:
-        return "错误：缺少必填参数 url（要截图的网页地址）。"
-
-    try:
-        img = await screenshot_url(url)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("[ai render:screenshot] 截图失败")
-        return f"错误：网页截图失败：{exc}。请如实告知用户，或改用文本回复。"
-
-    try:
-        note = await sender(img, "网页截图.png")
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("[ai render] 截图发送失败")
-        return f"错误：截图成功但发送失败：{exc}。请如实告知用户。"
-
-    return f"已截取网页并{note}。用户可直接看到图片，你只需简短说明页面内容要点。"
-
-
-
-aitools.register_tool(
-    aitools.Tool(
-        namespace="web",
-        name="text",
-        description="把文本内容渲染成图片发送到当前会话。适合长文本、公告、适合整页呈现的内容。",
-        handler=lambda args: _ai_render("text", args),
-        params={
-            "content": "要渲染的文本（必填）",
-            "width": "图片宽度像素（可选，默认 680）",
-        },
-    )
-)
-aitools.register_tool(
-    aitools.Tool(
-        namespace="web",
-        name="md",
-        description="把 Markdown 内容渲染成图片发送到当前会话。表格、代码块、列表、标题排版适合用它。",
-        handler=lambda args: _ai_render("md", args),
-        params={
-            "content": "要渲染的 Markdown 文本（必填）",
-            "width": "图片宽度像素（可选，默认 860）",
-        },
-    )
-)
-aitools.register_tool(
-    aitools.Tool(
-        namespace="web",
-        name="html",
-        description="把 HTML 片段渲染成图片发送到当前会话。需要自定义样式/卡片布局时用。",
-        handler=lambda args: _ai_render("html", args),
-        params={
-            "content": "要渲染的 HTML 片段（必填，需含完整 <style> 或内联样式）",
-            "width": "图片宽度像素（可选，默认 900）",
-        },
-    )
-)
-aitools.register_tool(
-    aitools.Tool(
-        namespace="web",
-        name="screenshot",
-        description="截取指定网页的整页截图并发送到当前会话。用户要看某个网址页面内容/外观时用。",
-        handler=_ai_screenshot,
-        params={"url": "要截图的网页地址（必填，可省略 https:// 前缀）"},
-    )
-)

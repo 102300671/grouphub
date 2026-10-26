@@ -28,9 +28,7 @@
 > ⚠ **M0 首次收尾时只写了 `FACTS.md` 与 `STATUS.md`，其余五份漏写** —— 见 `.ai/README.md`《阶段收尾写回协议》，
 > 由此新增该协议与"写回在提交之前"的硬性顺序。
 
-## M1 · 建共享包，行为等价搬迁
-
-把 qqbot 侧 `aitools.py`（最完整的一份）提升为 `shared/aitools/`，tools 通过 ports 注入；qqbot 改为 import 共享包，**行为零变化**。
+## M1 · 建共享包，行为等价搬迁 · ✅ **已完成 2026-10-26**
 
 **新增能力（M0 带进来的）**：**图片尺寸自动探测** —— HTTP Range 拉前 64KB，解析 PNG IHDR / JPEG / GIF / WebP 头取宽高，
 照腾讯官方 `tencent-connect/openclaw-qqbot` 的 `image-size.ts` 做。
@@ -40,6 +38,21 @@
 尺寸探测对 PNG/JPEG/GIF/WebP 各有单测，Range 请求失败时**返回 None 而不是抛异常**（探测失败要能降级）。
 **回滚**：还原为原 `aitools.py`（保留一份 tag/分支）。
 **写回**：`ARCHITECTURE.md`（共享包分层与模块职责）· `CONTRACT.md`（ports 与工具接口契约）· `FACTS.md`（新文件 md5 基线）· `STATUS.md`（阶段状态与下一步）。
+
+**实际怎么做的**：
+先把**等价性**做成可测的（而不是"看着像"）：把旧实现逐字复制一份，在本地用同一批输入跑新旧两套，
+48 个工具用例 + 22 个协议用例全部逐字一致后再冻结成黄金 fixture；
+`package_catalog()` 与两个工具手册（1095 / 593 / 831 字符）也逐字比对，确认**发给模型的 prompt 没变**。
+之后才让 qqbot 切到共享包，并删掉旧的 `plugins/_lib/aitools.py`。
+**顺带修掉一个老 bug**：`/ai` 必抛 `TypeError`（`_chat_once` 不接 `on_reasoning`）——
+日志里从来没有过这条错误，说明**这条成功路径从未跑通过**。
+**图片尺寸探测**按 PLAN 落在共享包 `imagesize.py`：Range 64KB（官方是 32KB），
+多支持 WebP `VP8X`；格式按 QQ 官方文档的 `#宽px #高px`（官方插件是 `#宽x高`）。
+
+**验收结果**：QQ 端 8 个工具全通；旧 `aitools.py` **已删除**；轨迹事件结构不变（`round`/`reasoning`/
+`tool_call`/`tool_result` 四类事件与 payload 字段逐字不变）；尺寸探测 4 种格式各有单测、
+Range 失败返回 `None`（`shared/tests/test_imagesize.py`）。
+**写回**：见上（另补 `PLAN.md` / `DECISIONS.md` D5–D7 / `RISKS.md` R8·R13 / `VERIFY.md` V4·V10 / `.ai/README.md`）。
 
 ## M2 · backend 接入共享包
 

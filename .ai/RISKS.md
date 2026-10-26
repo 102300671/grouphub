@@ -71,11 +71,25 @@
 D2 的自动探测会产生一次真实上游调用（计费 + 延迟），BYOK 用户还有隐私面（探测请求带什么内容）。
 处置：仅探测最小请求；按 (model, api_base) 去重；失败退避；探测请求内容不落任何用户可见记录。
 
-## R8 · 🟡 共享包带来的部署耦合（D1 的代价）
+## R8 · 🟡 共享包带来的部署耦合（D1 的代价）· **M1 后形态已变，风险下降**
 
-两端各自 import 同一个包，意味着 backend 与 qqbot 的依赖需要同步安装；设备上 `backend/.venv` **目前不存在**（只有 `qqbot/.venv` 与 `/root/venv/{ai-chat-export,aider,nb2}`，后三者缺 markdown/playwright）。
-影响：本地无法起后端，只能做静态加载验证；跨端改动需要两台分别构建。
-处置：建议在设备建 `backend/.venv`（用户尚未拍板，见 `STATUS.md` 待决项）。
+**原形态**：两端各自 import 同一个包 → 依赖要同步安装；设备上 `backend/.venv` **不存在**（只做静态加载验证）。
+
+**M1 后的实际情况**：
+- 共享包是**纯 Python**（依赖只有 `httpx`，两个 venv 都有），**不需要装任何包** ——
+  两端把仓库根插进 `sys.path` 就能 import（见 DECISIONS D5）。
+- ⚠️ 更正旧结论：设备上**有** `backend/.venv`（Python 3.12.3 + httpx 0.28.1 + markdown + playwright），
+  旧文档"设备上无 backend/.venv"已过期（FACTS 同条已更正）。
+- 仍存在的耦合：**两端要一起改**。改 `shared/aitools/` 的接口 → 两端的 ports 适配器都要跟；
+  只改一端会 ImportError/AttributeError。
+
+**影响**：跨端改动的回归面变大；共享包出 bug 两端同时受影响。
+
+**处置**：
+1. 部署门禁：改共享包后，QQ 端跑 `nonebot.init() + load_from_toml()` 冒烟（导入链全通），
+   backend 端跑 `python -c "import app.api.ai"`（M2 接入后）；
+2. 共享包单测 `python3 -m unittest discover -s shared/tests -t .` **必须绿**才能合；
+3. 端口签名变更要在 `CONTRACT.md` 同步记录（契约改了先更 `DECISIONS.md`）。
 
 ## R9 · 🟡 字体环境差异导致对比失真
 
@@ -105,6 +119,26 @@ D2 的自动探测会产生一次真实上游调用（计费 + 延迟），BYOK 
 处置：图片资源走**已备案域名或外部 CDN**；裸 IP 可作临时手段但不宜长期。
 **未确认**：G 变体那个"加载中"是 QQ 侧转存尚未完成，还是彻底不通 —— 需过几分钟复看。
 **注意**：不要把"平台没报错"当成"资源已就绪"，这是 M0 期间我自己踩过的坑。
+
+## R13 · 🟡 尺寸探测的 SSRF 面（未做内网 IP 段拦截）
+
+`shared/aitools/imagesize.py` 的 `probe_image_size()` 只校验 scheme 是 http/https，
+**没有**像官方 `utils/ssrf-guard.ts` 那样拦截内网地址与云元数据端点（`169.254.169.254`）。
+
+**当前风险可控**：调用方只传**自己生成的**图片地址（渲染产物），不是用户输入。
+**但**：若将来允许用户指定 URL 去探测，就会变成 SSRF 通道。
+
+**处置**：一旦出现"用户可指定 URL"的用法，必须补上 IP 段黑名单（含 IPv6 与重定向后的目标地址），
+或改为"先由服务端自己落盘，再探测本地文件"。已记在 `imagesize.py` 的模块 docstring 里。
+
+## R14 · 🟡 共享包日志走标准库，QQ 端靠桥接（易被漏掉）
+
+共享包**不得 import nonebot**（D1 的落地约束），因此日志只能用标准库 `logging`；
+而 nonebot 用的是 loguru —— 直接用标准库的话，共享包的 INFO 日志在 QQ 终端与
+`qqbot/log/bot-*.log` 里**都看不到**（标准库最后 resort 只打 WARNING 以上到 stderr）。
+
+**处置（M1 已做）**：QQ 端 `plugins/_lib/aitools_host.py` 里加了 loguru 桥接
+（`shared.aitools` logger → loguru）。**新增端口/新起子进程时要记得带上桥接**，否则又变成"日志黑洞"。
 
 ## R12 · 🟢 其他
 

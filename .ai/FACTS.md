@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 |---|---|
-| 本地设备 / 云端 / GitHub HEAD | 曾全部 `0b1f1a1`（三向一致）。**2026-10-26 已推进到 `9ca6b93`**（临时 `/test` 命令 + ②b 对照组） |
+| 本地设备 / 云端 / GitHub HEAD | 曾全部 `0b1f1a1`（三向一致）。2026-10-26 推进到 `9ca6b93`（临时 `/test` 命令 + ②b 对照组）→ `56708db` → `c1bdb08`（M0 沉淀）→ **`5cd88f5`（M1 前的 HEAD）** |
 | `backend/app/renderer.py` md5 | `80b8dba671e123c7d68b85f6111824f7` |
 | `frontend/src/views/AIView.vue` md5 | `5277293a7de22aa2ba1bd436529771aa` |
 | 前端产物 | `AIView-Cs6XqcZn.css` 18084B、`AIView-Bg6kHXDY.js` 31380B（设备与云端逐字节一致） |
@@ -18,7 +18,7 @@
 |---|---|
 | 本地设备 chromium + `--no-sandbox --disable-dev-shm-usage --disable-gpu` | **卡死**，70s 超时被杀（exit 124） |
 | 本地设备同上 **+ `--use-gl=swiftshader`** | **2.6s 出图**，md 25341B / text 24513B，中文正常、表头蓝底与圆角边框正确 |
-| 本地设备 Python 环境 | 无 `backend/.venv`；`qqbot/.venv/bin/python3` 有 markdown+playwright，可直接加载 `app/renderer.py` |
+| 本地设备 Python 环境 | ⚠️ **本条已于 2026-10-26 更正**：设备上**有** `backend/.venv`（Python 3.12.3，含 httpx 0.28.1、markdown、playwright）。旧结论"无 backend/.venv"来自早期勘察，已过期；RISKS R8 里同源表述一并更正 |
 | 浏览器内核 | 设备与云端均为 `/root/.cache/ms-playwright/chromium-1234` |
 | 中文字体 | 设备 **40 条**（Noto Sans/Serif CJK 全套）；云端 **1 条**（Droid Sans Fallback）→ 本地与线上字形必然不同 |
 | 参考实现 | `/root/code/bot/qqbot/timetable/bot.py`：按 TracerPid / osrelease 含 PRoot / `/data/data/com.termux` 判定，无 GPU 也走 swiftshader，经 `RENDER__PROVIDER_CONFIG__LAUNCH_ARGS` 注入 |
@@ -272,10 +272,65 @@
 
 1. 渲染宽度默认值：代码 text420/md540/html600，工具手册与 QQ 端仍是 680/860/900。
 2. 两套渲染器：`backend/app/renderer.py`（自写 CSS）vs `qqbot/plugins/_lib/renderer.py`（nonebot-plugin-htmlrender）。
-3. 协议解析逻辑两份拷贝（约 150 行正则 ×2）。
+3. 协议解析逻辑两份拷贝（约 150 行正则 ×2）。**M1 状态：qqbot 侧已收敛到 `shared/aitools/protocol/textcodec.py`；backend 侧仍有一份旧的（`backend/app/api/ai.py`），M2 接入时删除。**
 4. `web:search` 挂载条件不对称（backend 有 `if searxng_url` 判断，qqbot 无条件）。
 5. `_MAX_TOOL_STEPS`（3 硬编码 / 默认 2 可配）、`web:screenshot` 的 `width` 参数一边有一边无、`site:add` 描述文案分叉。
 6. **chromium 启动参数三处各写一遍**：backend 硬编码缺 swiftshader、云端 `qqbot/.env.prod` 显式带 swiftshader、timetable 自动检测。
+
+## M1 落地基线（2026-10-26 · 设备实测）
+
+### 代码基线（M1 后）
+
+| 项 | 值 |
+|---|---|
+| M1 前 HEAD | `5cd88f5`（三向一致） |
+| 删除 | `qqbot/plugins/_lib/aitools.py`（md5 `846e31db53354f3970d85bbbe3fcc9dc`，607 行）——原样留档在 git 历史 |
+| 新增 | `qqbot/plugins/_lib/aitools_host.py`（md5 `369aab529bf5c5f5ccd46be375fc4e85`）——QQ 侧 ports 实现 |
+| 新增 | `shared/aitools/` 全套（`__init__` `cbf4f7ba…` / `registry` `e065a6e3…` / `loop` `e7f7bcff…` / `prompt` `728b990d…` / `ports` `2844b722…` / `agent` `ec6e3f9a…` / `errors` `8019c93c…` / `logs` `6ad272e4…` / `tools/web` `62361ec0…` / `tools/site` `58d768b0…` / `protocol/textcodec` `2dd62b7d…` / `imagesize` `1a5138cb…`） |
+| 改 | `qqbot/plugins/commands/ai.py` `22f51358…` / `render.py` `38261dc1…` / `work.py` `fd43581c…` / `qqbot/bot.py` `77c7dbe0…` / `qqbot/plugins/__init__.py` `5e6594c5…` |
+
+### 行为等价的机械证据（M1 核心验收）
+
+| 验证 | 方法 | 结果 |
+|---|---|---|
+| 8 个工具输出 | 旧实现（ai.py/render.py/work.py 的工具代码逐字复制）与新实现跑同一批 48 个输入 | **48/48 逐字一致**（0 不一致） |
+| 文本协议编解码 | 旧 `aitools.py` 与新 `textcodec.py` 跑同一批 22 条模型输出（含标签漂移、JSON 参数、function 块、未闭合块等） | **22/22 逐字一致** |
+| **发给模型的 prompt** | 旧注册表 vs 新 `Agent`，比 `package_catalog()` / 工具手册 web / site | **1095 / 593 / 831 字符，三段全部逐字一致**；工具顺序与包顺序也一致 |
+| 单测 | `python3 -m unittest discover -s shared/tests -t .`（设备 `qqbot/.venv`） | **37 passed**（含 6 个需 httpx 的尺寸探测用例） |
+
+> 复现：`shared/tests/fixtures/{tools,codec}_golden.json` 里同时存了"旧实现输出"与"新实现输出"，
+> 单测断言两者相等 —— 有人手改期望值会被 `test_golden_recorded_old_and_new_agree` 抓住。
+
+### 老 bug：`/ai` 必抛 TypeError（M1 顺手修掉）
+
+- **现象**：任何 `/ai` 调用都抛 `TypeError: _chat_once() got an unexpected keyword argument 'on_reasoning'`。
+- **根因**：`aitools.run_agent_turn` 固定 `chat(messages, on_reasoning=cb)`，而 qqbot 的
+  `_chat_once(msgs)` 没接这个关键字参数。引入于提交 `6a6586d`（loop 改签名，调用方没跟改）。
+- **为什么一直没被发现**：`journalctl` 与 `qqbot/log/bot-*.log` 里**从来没有过**这条 TypeError ——
+  说明 **`/ai` 的成功路径从未跑通**（服务 `active`、`NRestarts=0` 掩盖了这一点）。
+- **M1 修法**：`ChatBackend` 端口约定"必须接受 `on_reasoning`"，QQ 端 `_chat_once(msgs, *, on_reasoning=None)`
+  透传给 `_chat`；思维链事件改由 agent 循环统一发出（原先 QQ 端自己转一道，
+  若两条路径并存会把同一条思维链计两次）。
+
+### 尺寸探测的两处「有意与官方不同」
+
+| 项 | 官方 `openclaw-qqbot` 2.0.4 | 本实现 | 理由 |
+|---|---|---|---|
+| Range 长度 | `bytes=0-32767`（32KB） | `bytes=0-65535`（64KB） | PLAN/D3 定的是 64KB；大 EXIF/APP 段的 JPEG 头可能超 32KB |
+| 格式覆盖 | PNG / JPEG / GIF / WebP(VP8·VP8L) | 同上 + **WebP VP8X** | 官方未覆盖 VP8X（带 alpha/画布裁剪的 WebP 常见是它），官方实现在这类文件上返回 null |
+
+**格式写法也不同**：官方 `formatQQMarkdownImage` 输出 `![img #800x600](url)`（`#宽x高`），
+而 QQ 官方文档与 M0 实测用的是 `![alt #800px #600px](url)`（`#宽px #高px`）。
+**本实现以官方文档为准**（`format_markdown_image`），M0 已实测 `#480px #480px` 手机端正常出图。
+
+### 共享包的其它落地事实
+
+- 共享包**不 import nonebot**：日志用标准库 `logging`；QQ 端在 `aitools_host.py` 里做 loguru 桥接
+  （`shared.aitools` logger → loguru），否则共享包的 INFO 日志在 QQ 终端/文件日志里看不到。
+- 两端把**仓库根**插进 `sys.path` 后 `import shared.aitools`（不做 pip 安装）：
+  QQ 端在 `qqbot/plugins/__init__.py`（nonebot 加载插件时父包必先导入，路径引导对所有插件生效）
+  与 `qqbot/bot.py` 各做一次（幂等）。
+- 共享包**全局无可变状态**：注册表是 `Registry` 实例，`build_agent()` 造 `Agent` 持有它。
 
 ---
 

@@ -8,7 +8,7 @@
 配置优先级：/ai 配置（管理员，持久化到 data/ai_config.json）> .env.prod 的 AI_* > 内置默认。
 多轮对话：按会话保留最近 AI_MAX_HISTORY 轮上下文，/ai 重置 清空。
 
-联网采用文本协议工具调用（plugins/_lib/aitools.py）：模型自行判断是否需要搜索，
+联网采用文本协议工具调用（仓库根 shared/aitools，QQ 侧能力经 plugins/_lib/aitools_host.py 注入）：模型自行判断是否需要搜索，
 需要时输出 <tool_call> 块，bot 执行 web:search（本地 SearXNG）后把结果回灌，
 无需命令行加开关，也不依赖模型原生 function calling。
 """
@@ -25,9 +25,12 @@ from dotenv import load_dotenv
 from nonebot import get_driver, logger
 from nonebot.adapters import Bot, Event
 
-from .._lib import aisync, aitools
+from shared.aitools.registry import Context, SearchItem
+from shared.aitools.tools.web import SearXNGSearch
+
+from .._lib import aisync
+from .._lib.aitools_host import SITE_BASE_URL, QQImageSink, build_qq_agent
 from .._lib.bots import qq_openapi_request, resolve_sender_qq
-from .._lib.renderer import send_image
 from .._lib.cli import Command, CommandError, Option, ParseResult
 
 _ENV_PATH = Path(__file__).resolve().parents[2] / ".env.prod"
@@ -284,113 +287,23 @@ async def _chat(
     return collected.strip()
 
 
-# ------------------ SearXNG 联网搜索 ------------------
+# ------------------ 共享包（AI 工具层） ------------------
+# 8 个工具（web:search / web:text / web:md / web:html / web:screenshot /
+# site:hot / site:search / site:add）的实现都在仓库根 shared/aitools/，两端共用一份；
+# 这里只负责 QQ 侧的能力注入：搜索地址、渲染、作品库、发图出口。
 
-async def _web_search(
-    query: str, *, limit: Optional[int] = None
-) -> tuple[List[Dict[str, str]], List[str]]:
-    """经本地 SearXNG 的 JSON API 检索。
-
-    返回 (结果列表[{title,url,content}], 无响应引擎说明列表)。
-    limit: 最多返回多少条（None 或 <=0 时用 _SEARCH_RESULTS 默认值）。
-    要求 SearXNG 的 settings.yml 中 search.formats 包含 json。
-    """
-    cfg = get_config()
-    base = (cfg["searxng_url"] or "").rstrip("/")
-    if not base:
-        raise RuntimeError("未配置 SearXNG 地址（AI_SEARXNG_URL 或 /ai 配置 --searxng-url）")
-    url = base if base.endswith("/search") else f"{base}/search"
-    try:
-        resp = await _http().get(
-            url,
-            params={"q": query, "format": "json", "language": "zh-CN"},
-            headers={"Accept": "application/json"},
-        )
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
-        raise RuntimeError(f"无法连接 SearXNG（{url}）：{exc}") from exc
-    if resp.status_code != 200:
-        raise RuntimeError(f"SearXNG 返回 {resp.status_code}：{resp.text[:150]}")
-    try:
-        data = resp.json()
-    except ValueError as exc:
-        raise RuntimeError("SearXNG 未返回 JSON（请确认 search.formats 已启用 json）") from exc
-    cap = limit if (limit and limit > 0) else _SEARCH_RESULTS
-    items: List[Dict[str, str]] = []
-    for item in (data.get("results") or [])[:cap]:
-        record = {
-            "title": str(item.get("title") or "").strip(),
-            "url": str(item.get("url") or "").strip(),
-            "content": str(item.get("content") or "").strip(),
-        }
-        if record["title"]:
-            items.append(record)
-    dead: List[str] = []
-    for engine, reason in (data.get("unresponsive_engines") or []):
-        dead.append(f"{engine}（{reason}）")
-    return items, dead
-
-
-def _build_reference(items: List[Dict[str, str]]) -> str:
-    """把搜索结果拼成给模型的参考资料块，并给出可群里展示的来源列表。"""
-    blocks = []
-    for i, r in enumerate(items, 1):
-        blocks.append(
-            f"[{i}] {r['title']}\n    {r['url']}\n    {r['content']}"
-        )
-    return (
-        "以下是联网搜索到的参考资料（请优先依据这些资料回答用户问题；"
-        "资料没有覆盖的内容按你自己的知识补充，并在回答末尾按 [序号] 列出参考来源）：\n"
-        + "\n".join(blocks)
-    )
-
-
-# ------------------ 注册文本协议工具（aitools） ------------------
-
-async def _web_search_tool(args: Dict[str, str]) -> str:
-    """web:search 工具入口：模型给 query，返回带序号的参考资料文本。"""
-    query = (args.get("query") or "").strip()
-    if not query:
-        return "错误：缺少必填参数 query（搜索关键词）。"
-    items, dead_engines = await _web_search(query)
-    if not items:
-        logger.warning(f"[ai] web:search 零结果，query={query!r}，无响应引擎：{dead_engines or '（无报告）'}")
-        engine_note = ""
-        if dead_engines:
-            engine_note = (
-                "\n注意：本次所有搜索引擎均无响应，故障来自搜索服务侧而非关键词，"
-                f"详情：{'、'.join(dead_engines[:6])}。不要反复换词重试超过一次，"
-                "请如实告知用户搜索引擎暂时不可用，并给出可自行查证的渠道。"
-            )
-        return (
-            "未搜索到任何结果。可以换一个更精炼或英文的关键词重试一次；"
-            "若仍无结果就直接回答用户。" + engine_note
-        )
-    if dead_engines:
-        logger.info(f"[ai] web:search 命中 {len(items)} 条，部分引擎无响应：{dead_engines}")
-    return _build_reference(items)
-
-
-aitools.register_package(
-    aitools.Package(
-        name="web",
-        description=(
-            "联网搜索 + 内容渲染：通过本地 SearXNG 检索网页获取最新资讯/版本信息/攻略资料；"
-            "也可把文本/Markdown/HTML 渲染成图片、对网页整页截图并发到当前会话。用户要求"
-            "「渲染成图片/做成图片/截图/图片展示」或回答适合用图片呈现时，也激活本包。"
-        ),
-    )
+_SEARCH = SearXNGSearch(
+    lambda: (get_config()["searxng_url"] or "").rstrip("/"),
+    results=_SEARCH_RESULTS,
+    missing_hint="AI_SEARXNG_URL 或 /ai 配置 --searxng-url",
 )
-aitools.register_tool(
-    aitools.Tool(
-        namespace="web",
-        name="search",
-        description="联网搜索网页，用于获取最新资讯、近期版本/数值、攻略资料或你不确定的事实。",
-        handler=_web_search_tool,
-        params={"query": "搜索关键词（必填，精炼，不要包含'帮我搜一下'等客套话）"},
-    )
+
+AGENT = build_qq_agent(search=_SEARCH, site_base_url=SITE_BASE_URL)
+
+logger.info(
+    f"[ai] 已注册工具包：{', '.join(p.name for p in AGENT.registry.packages())}"
+    f"（工具：{', '.join(t.fullname for t in AGENT.registry.tools())}）"
 )
-logger.info(f"[ai] 已注册工具包：{', '.join(p.name for p in aitools.registered_packages())}"
-            f"（工具：{', '.join(t.fullname for t in aitools.registered_tools())}）")
 
 
 # ------------------ 消息切分 ------------------
@@ -917,19 +830,13 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     use_local_flag = bool(result.get("local"))
     model_override = result.get("model")
 
-    # 把调用者真实 QQ 注入 aitools 上下文，供 site:add 等需要身份的工具使用
+    # 调用者身份 + 图片发送出口：随 Context 传给工具（不再用进程级 contextvar）
     caller_qq = await resolve_sender_qq(event)
-    qq_token = aitools.set_current_user_qq(caller_qq)
-
-    # 注入图片发送器：渲染类工具（render 包）把图片直接发到当前会话
-    async def _image_sender(img_bytes: bytes, filename: str) -> str:
-        try:
-            return await send_image(bot, event, img_bytes, filename)
-        except Exception as exc:  # noqa: BLE001
-            logger.error(f"[ai render] 图片发送失败：{exc}")
-            return "渲染成功但图片发送失败（详见日志），请改用文本回复用户。"
-
-    img_token = aitools.set_current_image_sender(_image_sender)
+    ctx = Context(
+        user_qq=caller_qq,
+        channel="qq",
+        sink=QQImageSink(bot, event),
+    )
 
     cfg = get_config()
     base = ""
@@ -951,8 +858,6 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
                     "机器人所在的服务器访问不到你的本地模型。\n"
                     "请在网页端 AI 页面使用该配置，或用「/ai 切换 默认」切回远程配置。",
                 )
-                aitools.reset_current_user_qq(qq_token)
-                aitools.reset_current_image_sender(img_token)
                 return
             base = (active.get("api_base") or "").rstrip("/")
             key = active.get("api_key") or ""
@@ -986,8 +891,6 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
                     "请先在网页端注册（注册页会给你验证码，发给机器人完成绑定），"
                     "绑定后再来提问。",
                 )
-                aitools.reset_current_user_qq(qq_token)
-                aitools.reset_current_image_sender(img_token)
                 return
             logger.warning(f"[ai] 后端配置/会话获取失败，降级 .env.prod 默认：{exc}")
         except Exception as exc:  # noqa: BLE001 后端离线 → 降级本地默认
@@ -1011,8 +914,8 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
     # 生效配置的人设提示词（用户自建配置没写则回退默认）+ 动态当前日期 + 工具协议手册
     system_parts = [
         user_system_prompt or cfg["system_prompt"],
-        aitools.date_hint(),
-        aitools.package_catalog(),
+        AGENT.date_hint(),
+        AGENT.package_catalog(),
     ]
     system_content = "\n\n".join(part for part in system_parts if part)
     if system_content:
@@ -1074,17 +977,22 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
                     target["result"] = result_obj
                     break
 
-    async def _chat_once(msgs: List[Dict[str, str]]) -> str:
+    async def _chat_once(
+        msgs: List[Dict[str, str]], *, on_reasoning=None
+    ) -> str:
+        # on_reasoning 由 agent 循环传入：思维链事件统一由循环发出，
+        # 这里不再自己转一道，避免同一条思维链被计两次。
         return await _chat(
             msgs, base=base, key=key, model=final_model,
             on_delta=streamer.send if streamer is not None else None,
-            on_reasoning=lambda text: _on_agent_event("reasoning", {"text": text}),
+            on_reasoning=on_reasoning,
         )
 
     try:
-        answer = await aitools.run_agent_turn(
+        answer = await AGENT.run_turn(
             _chat_once,
             messages,
+            ctx=ctx,
             on_event=_on_agent_event,
             max_tool_steps=_MAX_TOOL_STEPS,
         )
@@ -1095,9 +1003,6 @@ async def ask(bot: Bot, event: Event, result: ParseResult) -> None:
         logger.exception("[ai] 提问处理异常")
         await bot.send(event, f"⚠️ 执行出错：{exc}")
         return
-    finally:
-        aitools.reset_current_user_qq(qq_token)
-        aitools.reset_current_image_sender(img_token)
 
     if not answer:
         answer = "（模型没有返回有效内容）"
@@ -1215,7 +1120,7 @@ async def config(bot: Bot, event: Event, result: ParseResult) -> None:
 
 # ------------------ /搜网 handler ------------------
 
-def _fmt_web_brief(items: List[Dict[str, str]]) -> str:
+def _fmt_web_brief(items: List[SearchItem]) -> str:
     """精简格式：标题+简介+链接（不回灌完整正文，给群友直接看链接用）。
 
     与 _build_reference 的区别：后者拼成完整参考资料块回灌给 AI 用于推理；
@@ -1225,13 +1130,13 @@ def _fmt_web_brief(items: List[Dict[str, str]]) -> str:
         return "暂无结果。"
     lines = []
     for i, r in enumerate(items, 1):
-        lines.append(f"{i}. {r['title']}")
-        content = (r.get("content") or "").strip()
+        lines.append(f"{i}. {r.title}")
+        content = (r.content or "").strip()
         if content:
             if len(content) > 120:
                 content = content[:119] + "…"
             lines.append(f"   {content}")
-        lines.append(f"   {r['url']}")
+        lines.append(f"   {r.url}")
     return "\n".join(lines)
 
 
@@ -1247,11 +1152,13 @@ async def search_web(bot: Bot, event: Event, result: ParseResult) -> None:
         return
     limit = result.get("limit", 5)
     try:
-        items, dead_engines = await _web_search(query, limit=limit)
+        outcome = await _SEARCH.search(query, limit=limit)
     except RuntimeError as exc:
         logger.error(f"[ai /搜网] 搜索失败：{exc}")
         await bot.send(event, f"⚠️ 搜索失败：{exc}")
         return
+    items = outcome.items
+    dead_engines = outcome.dead_engines
     if not items:
         msg = f"🔍 没搜到「{query}」相关结果。"
         if dead_engines:

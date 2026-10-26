@@ -84,4 +84,45 @@
 
 ---
 
+## D5 · 共享包的落地方式：仓库根 + `sys.path` 引导，**不做 pip 安装**（M1 定）
+
+**决定**：`shared/` 放仓库根，两端把仓库根插进 `sys.path` 后 `import shared.aitools`。
+QQ 端在 `qqbot/plugins/__init__.py`（nonebot 加载插件时父包必先导入，引导对所有插件生效）
+与 `qqbot/bot.py` 各做一次（幂等）。
+
+**理由**：D1 已经否掉了"独立 pip 包锁版本"，那就更不该在仓库内再引入一次"装包"步骤 ——
+云端部署要继续满足"只 `git pull` + 重启"，改 venv 会让部署多一个变量，也多一处版本错位的可能。
+
+**代价**：共享包不再随 venv 走，路径写错只在**导入时**炸（不会静默用到旧版本）。
+用「插件加载冒烟」当门禁（`nonebot.init() + load_from_toml()` 能起 = 导入链全通）。
+
+## D6 · 共享包内部结构：实例化注册表 + 端口分层 + 参数文案结构化（M1 定）
+
+**决定**三件事：
+
+1. **注册表是实例**（`Registry`），`build_agent()` 造一个 `Agent` 持有它，共享包内无全局可变状态。
+   —— 旧实现是"QQ 端进程级全局注册表"，而 backend 是"每请求构造工具表"，两种模型在同一个包里会打架。
+2. **端口分三层**：`ChatBackend` per-turn（QQ 端每用户 base/key/model 不同，进程级注入会串号）、
+   `ImageSink` per-request（发到当前会话）、`SearchBackend`/`Renderer`/`SiteDAO` 进程级。
+   调用者身份不设端口，随 `Context` 传（`Context.user_qq` / `Context.owner_id` 两端各取所需）。
+3. **参数说明结构化**：`Tool.params` 是 `dict[str, Param]`，`Param.default` 是默认值的**唯一真源**，
+   手册文案由 `Param` 渲染、`Tool.defaults` 是派生属性。
+   —— 这样"手册说 680、代码用 420"（漂移 1）**在结构上不可能发生**，而不是靠人记得同步。
+
+**顺带替换掉的**：旧实现用两个 `contextvar`（`set_current_user_qq` / `set_current_image_sender`）
+传 per-request 状态，改为显式 `Context` 参数。
+
+## D7 · markdown 尺寸提示格式以**官方文档**为准，不照抄 openclaw 插件（M1 定）
+
+**决定**：`imagesize.format_markdown_image()` 输出 `![alt #宽px #高px](url)`。
+
+**依据**：QQ 官方文档的示例就是 `#208px #320px`；M0 实测（②c 对照）也证明带 `#宽px #高px`
+手机端才出图。而 `tencent-connect/openclaw-qqbot` 的 `formatQQMarkdownImage` 输出的是
+`![img #800x600](url)`（`#宽x高`）—— **写法不同**，不能照抄。
+
+**注意**：只对齐**格式**；**解析**规则（Range 拉头、PNG/JPEG/GIF/WebP 判定）照官方实现，
+且有意扩了两处：Range 取 64KB（官方 32KB）、多支持 WebP `VP8X`（官方未覆盖）。
+
+---
+
 内容由 AI 生成

@@ -1,0 +1,508 @@
+[
+  {
+    "text": "",
+    "calls": [],
+    "stripped": "",
+    "legacy_calls": [],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "今天天气不错。",
+    "calls": [],
+    "stripped": "今天天气不错。",
+    "legacy_calls": [],
+    "legacy_stripped": "今天天气不错。",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=泰拉瑞亚 最新版本\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "泰拉瑞亚 最新版本"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=泰拉瑞亚 最新版本\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "泰拉瑞亚 最新版本"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=泰拉瑞亚 最新版本\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "先搜索一下。\n<tool_call>\nweb:search\nquery=测试\n</tool_call>\n再补充一句。",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "测试"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=测试\n</tool_call>"
+      }
+    ],
+    "stripped": "先搜索一下。\n\n再补充一句。",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "测试"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=测试\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "先搜索一下。\n\n再补充一句。",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=a\n</tool_call>\n<tool_call>\nsite:hot\nlimit=3\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "a"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=a\n</tool_call>"
+      },
+      {
+        "name": "site:hot",
+        "args": {
+          "limit": "3"
+        },
+        "raw": "<tool_call>\nsite:hot\nlimit=3\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "a"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=a\n</tool_call>"
+      },
+      {
+        "name": "site:hot",
+        "args": {
+          "limit": "3"
+        },
+        "raw": "<tool_call>\nsite:hot\nlimit=3\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\n{\"query\": \"JSON 写法\", \"limit\": \"5\"}\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "JSON 写法",
+          "limit": "5"
+        },
+        "raw": "<tool_call>\nweb:search\n{\"query\": \"JSON 写法\", \"limit\": \"5\"}\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "JSON 写法",
+          "limit": "5"
+        },
+        "raw": "<tool_call>\nweb:search\n{\"query\": \"JSON 写法\", \"limit\": \"5\"}\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=闭标签漂移\n</think>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "闭标签漂移"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=闭标签漂移\n</think>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "闭标签漂移"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=闭标签漂移\n</think>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=闭标签漂移2\n</function>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "闭标签漂移2"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=闭标签漂移2\n</function>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "闭标签漂移2"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=闭标签漂移2\n</function>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=闭标签漂移3\n</function_calls>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "闭标签漂移3"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=闭标签漂移3\n</function_calls>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "闭标签漂移3"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=闭标签漂移3\n</function_calls>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<function name=\"web:search\">\nquery=function 标签块\n</function>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "function 标签块"
+        },
+        "raw": "<function name=\"web:search\">\nquery=function 标签块\n</function>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "function 标签块"
+        },
+        "raw": "<function name=\"web:search\">\nquery=function 标签块\n</function>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\n<parameter=query>参数标签写法</parameter>\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "参数标签写法"
+        },
+        "raw": "<tool_call>\nweb:search\n<parameter=query>参数标签写法</parameter>\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "参数标签写法"
+        },
+        "raw": "<tool_call>\nweb:search\n<parameter=query>参数标签写法</parameter>\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=未闭合的块",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "未闭合的块"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=未闭合的块"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "未闭合的块"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=未闭合的块"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\n<web:search>\nquery=名字被尖括号包裹\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "名字被尖括号包裹"
+        },
+        "raw": "<tool_call>\n<web:search>\nquery=名字被尖括号包裹\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "名字被尖括号包裹"
+        },
+        "raw": "<tool_call>\n<web:search>\nquery=名字被尖括号包裹\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "结果如下 <tool_result name=\"web:search\">参考资料</tool_result> 结束",
+    "calls": [],
+    "stripped": "结果如下  结束",
+    "legacy_calls": [],
+    "legacy_stripped": "结果如下  结束",
+    "same": true
+  },
+  {
+    "text": "<TOOL_CALL>\nWEB:SEARCH\nQUERY=大写标签\n</TOOL_CALL>",
+    "calls": [
+      {
+        "name": "WEB:SEARCH",
+        "args": {
+          "QUERY": "大写标签"
+        },
+        "raw": "<TOOL_CALL>\nWEB:SEARCH\nQUERY=大写标签\n</TOOL_CALL>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "WEB:SEARCH",
+        "args": {
+          "QUERY": "大写标签"
+        },
+        "raw": "<TOOL_CALL>\nWEB:SEARCH\nQUERY=大写标签\n</TOOL_CALL>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call> foo=\"bar\"\nweb:search\nquery=带属性\n</tool_call>",
+    "calls": [
+      {
+        "name": "foo=\"bar\"",
+        "args": {
+          "query": "带属性"
+        },
+        "raw": "<tool_call> foo=\"bar\"\nweb:search\nquery=带属性\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "foo=\"bar\"",
+        "args": {
+          "query": "带属性"
+        },
+        "raw": "<tool_call> foo=\"bar\"\nweb:search\nquery=带属性\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=值里带=号\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "值里带=号"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=值里带=号\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "值里带=号"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=值里带=号\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=多行值\n第一行\n第二行\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "多行值"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=多行值\n第一行\n第二行\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "多行值"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=多行值\n第一行\n第二行\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {},
+        "raw": "<tool_call>\nweb:search\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {},
+        "raw": "<tool_call>\nweb:search\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nsite:add\ntitle=标题\ntags=百合,连载中\nlinks=起点=https://a.example\n</tool_call>",
+    "calls": [
+      {
+        "name": "site:add",
+        "args": {
+          "title": "标题",
+          "tags": "百合,连载中",
+          "links": "起点=https://a.example"
+        },
+        "raw": "<tool_call>\nsite:add\ntitle=标题\ntags=百合,连载中\nlinks=起点=https://a.example\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "site:add",
+        "args": {
+          "title": "标题",
+          "tags": "百合,连载中",
+          "links": "起点=https://a.example"
+        },
+        "raw": "<tool_call>\nsite:add\ntitle=标题\ntags=百合,连载中\nlinks=起点=https://a.example\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=参数里带尖括号\n<参数>\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "参数里带尖括号"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=参数里带尖括号\n<参数>\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "参数里带尖括号"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=参数里带尖括号\n<参数>\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  },
+  {
+    "text": "<tool_call>\nweb:search\nquery=后面又开一个\n<tool_call>\nsite:hot\n</tool_call>",
+    "calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "后面又开一个"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=后面又开一个\n"
+      },
+      {
+        "name": "site:hot",
+        "args": {},
+        "raw": "<tool_call>\nsite:hot\n</tool_call>"
+      }
+    ],
+    "stripped": "",
+    "legacy_calls": [
+      {
+        "name": "web:search",
+        "args": {
+          "query": "后面又开一个"
+        },
+        "raw": "<tool_call>\nweb:search\nquery=后面又开一个\n"
+      },
+      {
+        "name": "site:hot",
+        "args": {},
+        "raw": "<tool_call>\nsite:hot\n</tool_call>"
+      }
+    ],
+    "legacy_stripped": "",
+    "same": true
+  }
+]

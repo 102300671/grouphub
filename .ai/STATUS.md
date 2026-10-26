@@ -9,11 +9,31 @@
 | 现状勘察 | ✅ 完成 | 两端工具链路差异、6 处漂移已查清（`FACTS.md` / `RISKS.md`） |
 | 设计决策 | ✅ **已批准** | 用户 16:24 回复"还可以"，D1–D4 生效；`.ai/` 已入库 |
 | M0 前置核实 | ✅ **全部完成，根因已确证** | ①②③ 全测完。**markdown 段群聊可用**（富文本/代码块/表格全对）。**嵌图根因确证：官方图片语法要带尺寸提示** `![alt #Wpx #Hpx](url)` —— 加上后**手机端正常出图**（②c：E/F 出图、H 无尺寸复现 `[alt]`）。另有独立因素：自建未备案域名的图卡在"加载中"。**"手机上 markdown 嵌图没戏"的旧判断已作废**。完整记录见 **[`M0-markdown-可行性实测.md`](M0-markdown-可行性实测.md)** |
-| M1 建共享包 | ⬜ 未开始 | 依赖 M0 排期，不阻塞开工 |
+| M1 建共享包 | ✅ **完成 2026-10-26** | `shared/aitools/` 落地（13 个模块 + 5 份单测），qqbot 改为 import 共享包，**行为零变化**（48 工具用例 + 22 协议用例 + 3 段 prompt 全部逐字一致）；顺手修掉 `/ai` 必抛 `TypeError` 的老 bug |
 | M2 backend 接入 | ⬜ 未开始 | |
 | M3 双协议+判定 | ⬜ 未开始 | |
 | M4 图片与 markdown | ⬜ 未开始 | 硬依赖 M0 结论 |
 | M5 跨端上下文 | ⬜ 未开始 | |
+
+## 2026-10-26 轮：M1 建共享包（行为零变化搬迁）
+
+| 动作 | 结果 |
+|---|---|
+| 新增 `shared/aitools/` | 13 个模块：`registry`（含 `Param`/`Context`/`Registry`）· `agent` · `loop` · `prompt` · `protocol/{textcodec,names}` · `tools/{web,site}` · `ports` · `errors` · `logs` · `imagesize` |
+| 删 `qqbot/plugins/_lib/aitools.py` | 607 行 → 共享包；原文件留档在 git 历史（md5 `846e31db…`） |
+| 新增 `qqbot/plugins/_lib/aitools_host.py` | QQ 侧 ports 实现（`QQRenderer` / `QQSiteDAO` / `QQImageSink`）+ loguru 桥接 + `build_qq_agent()` |
+| 改 `commands/ai.py` | 工具注册与实现全部搬走；`Context` 取代两个 contextvar；`_chat_once` 改为接受 `on_reasoning` |
+| 改 `commands/render.py` | 砍掉 4 个 AI 工具实现（约 113 行），命令路径宽度改用共享的 `RENDER_WIDTHS` |
+| 改 `commands/work.py` | 砍掉 3 个 AI 工具实现 + `_normalize_type` + `_fmt_works_for_ai`（约 250 行），`WORK_TYPES` 改从共享包 import |
+| 改 `bot.py` / `plugins/__init__.py` | 仓库根插进 `sys.path`（幂等，两处），两端 `import shared.aitools`；**不做 pip 安装** |
+| 新增 `shared/tests/` | `unittest`（三个环境都无 pytest）：4 个测试文件 + 2 份黄金 fixture |
+| 设备单测 | `qqbot/.venv/bin/python -m unittest discover -s shared/tests -t .` → **37 passed** |
+| 行为等价验证 | 48 个工具用例 + 22 个协议用例 + 3 段 prompt（1095/593/831 字符）**全部逐字一致** |
+| 插件冒烟 | 设备 `nonebot.init() + load_from_toml()` → 插件全部加载成功，**命令表 18 条**，8 个工具注册齐全 |
+| 老 bug 修复 | `/ai` 必抛 `TypeError: _chat_once() got an unexpected keyword argument 'on_reasoning'` —— **该成功路径从未跑通过**（详见 FACTS） |
+
+**没有做（有意留到 M2）**：backend 侧不动（`backend/app/api/ai.py` 仍是旧的两份私有实现）；
+漂移 1/3/4/5/6 的彻底关闭归 M2（共享包已把 qqbot 侧收干净）。
 
 ## 本轮已落地的动作（16:24–16:34）
 
@@ -90,12 +110,14 @@ M0 实测做完、代码也推了，但**只写了 `FACTS.md` 与 `STATUS.md`**�
 
 ## 下一步（按优先级）
 
-1. **M0 收尾（唯一遗留）**：②c 的 **G 变体**（自建未备案域名 + 尺寸提示）在手机端显示
+1. **M2 backend 接入共享包**（M1 之后的下一个阶段）：`backend/app/api/ai.py` 里的正则解析 +
+   内联循环替换为共享包，Web 端实现自己的 ports（`Renderer` / `SearchBackend` / `SiteDAO` /
+   `ImageSink`）。**M2 会真正改变 Web 端的行为**（漂移 1/3/4/5/6 关闭：手册文案统一成
+   680/860/900、`web:screenshot` 补 `width` 参数、`max_tool_steps` 统一成可配、`site:add`
+   描述统一），需按 V4/V3 出对比数据再合。
+2. **M0 收尾（唯一遗留）**：②c 的 **G 变体**（自建未备案域名 + 尺寸提示）在手机端显示
    **"加载中"** —— 过几分钟再看一眼：若变成裂图/仍是加载中，则**自建未备案域名这条路不通**，
    图要换到**已备案域名 / CDN**；若是正常出图，则只剩转存延迟。
-2. **M1 建共享包**：**新增一项能力 —— 图片尺寸自动探测**（HTTP Range 拉前 64KB，
-   解析 PNG IHDR / JPEG / GIF / WebP 头取宽高，照 `tencent-connect/openclaw-qqbot`
-   的 `image-size.ts` 做）。M4 的 markdown 嵌图要用它。
 3. **M4 方案（已定，不再纠结）**：
    - markdown 段统一负责文字排版 + 图片，**图片必须带 `#宽px #高px`**
    - **不需要**为手机端单独维护一套"渲染成图"分支
@@ -107,6 +129,9 @@ M0 实测做完、代码也推了，但**只写了 `FACTS.md` 与 `STATUS.md`**�
 ## 已知未完成/待清理
 
 - 设备上有两个 9 月遗留备份未跟踪：`deploy/proxy_failover.py.bak.20260924`、`frontend/vite.config.ts.bak.20260924`。
+- **M1 改动前的设备端备份**（`*.bak_20261026_1533`，6 个文件：bot.py / plugins/__init__.py /
+  commands/{ai,render,work}.py / _lib/aitools.py）—— 已被 `.gitignore` 的 `*.bak_*` 规则忽略，
+  不会入库；确认线上无异常后可删。
 - 云端 `npm audit` 报 2 个 high 级别漏洞，未处理。
 - 设备 `backend/.venv` 目前无法完整启动后端服务验证（依赖已齐，但缺 `backend/.env` 配置：`config.py` 无站点基址、`PORT` 未设）。
 - **`/test` 是临时命令，验完必须删**（`qqbot/plugins/commands/test.py` + `cli_router.py` 的 import 与注册行）。

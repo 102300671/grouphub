@@ -75,6 +75,23 @@ M0 的教训：第一轮只有手机端截图，看到 markdown 里的图只显�
 
 任一断言失败禁止合入。
 
+**M1 状态：前两条已自动化**（`shared/tests/test_tools.py::TestToolManualText`）——
+`params` 文案与 `defaults` 都是从 `Param` 渲染/派生的，**结构上同源**，
+测试同时把 8 个工具的**逐字文案**钉死（改一个字都会红）。
+后两条属于 M2（backend 接入）与 M3（原生模式），届时补。
+
+**M1 的等价性验收（M2 之后要复用这套打法）**：
+旧实现与新实现跑**同一批输入**，逐字比对输出，并冻结成黄金 fixture：
+
+| 比对对象 | 用例数 | 落地位置 |
+|---|---|---|
+| 8 个工具的返回文本 | 48 | `shared/tests/fixtures/tools_golden.json` |
+| 文本协议编解码（解析 + 剥离） | 22 | `shared/tests/fixtures/codec_golden.json` |
+| `package_catalog()` 与两个工具手册 | 3 段（1095/593/831 字符） | M1 一次性核验脚本（需旧实现，删了旧文件后无法重跑，结论记在 FACTS） |
+
+fixture 里同时存了「旧实现输出」与「新实现输出」，单测断言两者相等 ——
+有人手改期望值会被 `test_golden_recorded_old_and_new_agree` 抓住。
+
 ## V5 · 协议与容错回归（M3）
 
 必须覆盖的用例（现两份正则的行为都要保住）：
@@ -111,6 +128,25 @@ M0 的教训：第一轮只有手机端截图，看到 markdown 里的图只显�
 3. 前端改动需 `npm run build` 后核对产物选择器与 md5
 4. 云端与设备的产物文件名与哈希应一致（此前实测逐字节相同，不一致即说明源码或环境分叉）
 5. 回滚路径必须写在提交信息里，不要只靠记忆
+
+## V10 · M1 收尾清单（每个阶段收尾跑一遍，数字写进 FACTS）
+
+```bash
+# 1. 共享包单测（三个环境都无 pytest，用 unittest）
+cd /root/code/grouphub && qqbot/.venv/bin/python -m unittest discover -s shared/tests -t .
+#    → 期望：OK（无 skip、无 fail）
+
+# 2. QQ 端插件导入冒烟（路径引导 + 端口适配器是否全通）
+cd /root/code/grouphub/qqbot && .venv/bin/python -c "
+import nonebot; nonebot.init(); nonebot.load_from_toml('pyproject.toml')
+from plugins.commands.ai import AGENT
+print([t.fullname for t in AGENT.registry.tools()])"
+#    → 期望：8 个工具 + 「命令注册表已构建：18 条命令」
+
+# 3. 三向一致（V1）—— 提交后跑
+```
+
+> 第 2 步是 M1 新增的门禁：共享包靠 `sys.path` 引导，**导入链断了只有这里能第一时间发现**。
 
 ## V9 · QQ 端渲染验证清单（M4 收尾必跑，沿用 M0 打法）
 

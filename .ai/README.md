@@ -13,14 +13,21 @@
         浏览器 /ai 页                    QQ 群 / 私聊
              │                                │
       backend/app/api/ai.py            qqbot/plugins/commands/ai.py
-      (1400 行，循环内联)               (1336 行，循环在 _lib/aitools.py)
+      (1400 行，循环内联)               (1336 行，循环内联)
              │                                │
-   _build_tool_table(请求级)          register_tool(进程级全局表)
+   _build_tool_table(请求级)          build_qq_agent()（进程级一次）
              │                                │
       backend/app/renderer.py        qqbot/plugins/_lib/renderer.py
       (自写 CSS, 纯 playwright)      (nonebot-plugin-htmlrender)
-             └──────── 同一套 8 工具，两套实现 ────────┘
+             └──────── 同一套 8 工具 ────────┘
+                            ▲
+                            │  M1 已建：shared/aitools/（仓库根，唯一实现）
+                            └── registry · prompt · protocol/textcodec · loop
+                                tools/{web,site} · ports · imagesize
 ```
+
+**M1 后**：QQ 端已切到共享包；**backend 端仍是旧的两份私有实现**（M2 接入）。
+两端暂时仍是两套，**但工具实现本身已经只有一份**（QQ 侧），漂移面在收窄。
 
 三台机器分工（**改动一律先落在本地设备**）：
 
@@ -41,6 +48,11 @@
    **M0 又补了一条同性质的纪律**：QQ 端内部还要**手机端 + 电脑端各看一遍** ——
    markdown 里的图片在手机端和电脑端表现可能不同（缺尺寸提示时手机端只显示 alt 文本）。
    凡"能不能显示"的结论，**必须两端都看**（见 `VERIFY.md` V0）。
+8. **共享包（`shared/aitools/`）的改动是跨端改动**：改端口签名 → 两端的 ports 适配器都要跟；
+   改工具文案 → 直接改发给模型的 prompt。合入前必须绿：
+   `qqbot/.venv/bin/python -m unittest discover -s shared/tests -t .`（V10 第 1 步）
+   + QQ 端插件导入冒烟（V10 第 2 步）。**共享包不 import nonebot/fastapi**（D1 约束），
+   日志只用标准库 `logging`（QQ 端靠 `aitools_host.py` 桥接 loguru，见 RISKS R14）。
 7. **阶段收尾必须写回 `.ai`，且写回在提交之前** —— 详见下一节《阶段收尾写回协议》。
    这条是从 M0 的漏写事故来的：M0 实测做完了、代码也推了，但**没有把结论按 PLAN.md
    的要求写进 `RISKS.md` / `DECISIONS.md` / `VERIFY.md`，也没建 PLAN.md 指定的产出物**，

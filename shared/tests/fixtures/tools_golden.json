@@ -1,0 +1,626 @@
+[
+  {
+    "tool": "web:search",
+    "args": {
+      "query": "泰拉瑞亚 最新版本"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是联网搜索到的参考资料（请优先依据这些资料回答用户问题；资料没有覆盖的内容按你自己的知识补充，并在回答末尾按 [序号] 列出参考来源）：\n[1] 标题一\n    https://example.com/1\n    内容一\n[2] 标题二\n    https://example.com/2\n    内容二",
+    "legacy": "以下是联网搜索到的参考资料（请优先依据这些资料回答用户问题；资料没有覆盖的内容按你自己的知识补充，并在回答末尾按 [序号] 列出参考来源）：\n[1] 标题一\n    https://example.com/1\n    内容一\n[2] 标题二\n    https://example.com/2\n    内容二",
+    "same": true
+  },
+  {
+    "tool": "web:search",
+    "args": {
+      "query": ""
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：缺少必填参数 query（搜索关键词）。",
+    "legacy": "错误：缺少必填参数 query（搜索关键词）。",
+    "same": true
+  },
+  {
+    "tool": "web:search",
+    "args": {
+      "query": "x"
+    },
+    "cfg": {
+      "search": "empty"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "未搜索到任何结果。可以换一个更精炼或英文的关键词重试一次；若仍无结果就直接回答用户。",
+    "legacy": "未搜索到任何结果。可以换一个更精炼或英文的关键词重试一次；若仍无结果就直接回答用户。",
+    "same": true
+  },
+  {
+    "tool": "web:search",
+    "args": {
+      "query": "x"
+    },
+    "cfg": {
+      "search": "empty",
+      "dead_engines": [
+        "bing（超时）",
+        "google（失败）"
+      ]
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "未搜索到任何结果。可以换一个更精炼或英文的关键词重试一次；若仍无结果就直接回答用户。\n注意：本次所有搜索引擎均无响应，故障来自搜索服务侧而非关键词，详情：bing（超时）、google（失败）。不要反复换词重试超过一次，请如实告知用户搜索引擎暂时不可用，并给出可自行查证的渠道。",
+    "legacy": "未搜索到任何结果。可以换一个更精炼或英文的关键词重试一次；若仍无结果就直接回答用户。\n注意：本次所有搜索引擎均无响应，故障来自搜索服务侧而非关键词，详情：bing（超时）、google（失败）。不要反复换词重试超过一次，请如实告知用户搜索引擎暂时不可用，并给出可自行查证的渠道。",
+    "same": true
+  },
+  {
+    "tool": "web:search",
+    "args": {
+      "query": "x"
+    },
+    "cfg": {
+      "dead_engines": [
+        "bing（超时）"
+      ]
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是联网搜索到的参考资料（请优先依据这些资料回答用户问题；资料没有覆盖的内容按你自己的知识补充，并在回答末尾按 [序号] 列出参考来源）：\n[1] 标题一\n    https://example.com/1\n    内容一\n[2] 标题二\n    https://example.com/2\n    内容二",
+    "legacy": "以下是联网搜索到的参考资料（请优先依据这些资料回答用户问题；资料没有覆盖的内容按你自己的知识补充，并在回答末尾按 [序号] 列出参考来源）：\n[1] 标题一\n    https://example.com/1\n    内容一\n[2] 标题二\n    https://example.com/2\n    内容二",
+    "same": true
+  },
+  {
+    "tool": "web:search",
+    "args": {
+      "query": "x"
+    },
+    "cfg": {
+      "search": "raise"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "__RAISE__RuntimeError: 无法连接 SearXNG（http://searxng/search）：boom",
+    "legacy": "__RAISE__RuntimeError: 无法连接 SearXNG（http://searxng/search）：boom",
+    "same": true
+  },
+  {
+    "tool": "web:text",
+    "args": {
+      "content": "你好"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:text",
+    "args": {
+      "content": ""
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：缺少必填参数 content（要渲染的内容）。",
+    "legacy": "错误：缺少必填参数 content（要渲染的内容）。",
+    "same": true
+  },
+  {
+    "tool": "web:text",
+    "args": {
+      "content": "你好",
+      "width": "900"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:text",
+    "args": {
+      "content": "你好",
+      "width": "abc"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:text",
+    "args": {
+      "text": "来自 text 字段"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:text",
+    "args": {
+      "content": "你好"
+    },
+    "cfg": {
+      "render": "raise"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：渲染失败：渲染器炸了。请如实告知用户，或改用文本回复。",
+    "legacy": "错误：渲染失败：渲染器炸了。请如实告知用户，或改用文本回复。",
+    "same": true
+  },
+  {
+    "tool": "web:text",
+    "args": {
+      "content": "你好"
+    },
+    "cfg": {
+      "send": "raise"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并渲染成功但图片发送失败（详见日志），请改用文本回复用户。。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并渲染成功但图片发送失败（详见日志），请改用文本回复用户。。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:text",
+    "args": {
+      "content": "你好"
+    },
+    "cfg": {},
+    "no_sink": true,
+    "no_user_qq": false,
+    "expect": "错误：当前会话不支持发送图片，请直接用文本回复用户。",
+    "legacy": "错误：当前会话不支持发送图片，请直接用文本回复用户。",
+    "same": true
+  },
+  {
+    "tool": "web:md",
+    "args": {
+      "content": "# 标题"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:md",
+    "args": {
+      "content": "# 标题",
+      "width": "1200"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:html",
+    "args": {
+      "content": "<b>x</b>"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:html",
+    "args": {
+      "content": "<b>x</b>",
+      "width": "1000"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "legacy": "已把内容渲染为图片并图片已发送到当前会话。用户可直接看到图片，你只需用一两句话收尾，不要重复图片里的全部内容。",
+    "same": true
+  },
+  {
+    "tool": "web:screenshot",
+    "args": {
+      "url": "https://example.com"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已截取网页并图片已发送到当前会话。用户可直接看到图片，你只需简短说明页面内容要点。",
+    "legacy": "已截取网页并图片已发送到当前会话。用户可直接看到图片，你只需简短说明页面内容要点。",
+    "same": true
+  },
+  {
+    "tool": "web:screenshot",
+    "args": {
+      "url": ""
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：缺少必填参数 url（要截图的网页地址）。",
+    "legacy": "错误：缺少必填参数 url（要截图的网页地址）。",
+    "same": true
+  },
+  {
+    "tool": "web:screenshot",
+    "args": {
+      "url": "https://example.com"
+    },
+    "cfg": {
+      "screenshot": "raise"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：网页截图失败：截图炸了。请如实告知用户，或改用文本回复。",
+    "legacy": "错误：网页截图失败：截图炸了。请如实告知用户，或改用文本回复。",
+    "same": true
+  },
+  {
+    "tool": "web:screenshot",
+    "args": {
+      "url": "https://example.com"
+    },
+    "cfg": {
+      "send": "raise"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已截取网页并渲染成功但图片发送失败（详见日志），请改用文本回复用户。。用户可直接看到图片，你只需简短说明页面内容要点。",
+    "legacy": "已截取网页并渲染成功但图片发送失败（详见日志），请改用文本回复用户。。用户可直接看到图片，你只需简短说明页面内容要点。",
+    "same": true
+  },
+  {
+    "tool": "web:screenshot",
+    "args": {
+      "url": "https://example.com"
+    },
+    "cfg": {},
+    "no_sink": true,
+    "no_user_qq": false,
+    "expect": "错误：当前会话不支持发送图片，请直接用文本回复用户。",
+    "legacy": "错误：当前会话不支持发送图片，请直接用文本回复用户。",
+    "same": true
+  },
+  {
+    "tool": "site:hot",
+    "args": {
+      "limit": "3"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲） · 热度 12\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙 · 热度 3\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲） · 热度 12\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙 · 热度 3\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:hot",
+    "args": {},
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲） · 热度 12\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙 · 热度 3\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲） · 热度 12\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙 · 热度 3\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:hot",
+    "args": {
+      "limit": "abc"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲） · 热度 12\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙 · 热度 3\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲） · 热度 12\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙 · 热度 3\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:hot",
+    "args": {
+      "limit": "999"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲） · 热度 12\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙 · 热度 3\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲） · 热度 12\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙 · 热度 3\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:hot",
+    "args": {},
+    "cfg": {
+      "site": "empty"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "站内当前没有热门作品。",
+    "legacy": "站内当前没有热门作品。",
+    "same": true
+  },
+  {
+    "tool": "site:hot",
+    "args": {},
+    "cfg": {
+      "site": "raise"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：查询站内热门作品失败：后端 500。请如实告知用户暂时无法获取。",
+    "legacy": "错误：查询站内热门作品失败：后端 500。请如实告知用户暂时无法获取。",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": "作品甲"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "query": "作品甲"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": "作品甲",
+      "type": "小说"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": "作品甲",
+      "type": "novel"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": "作品甲",
+      "type": "未知类型"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": "作品甲",
+      "limit": "5"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": "作品甲",
+      "limit": "999"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "legacy": "以下是站内作品库的相关作品（请优先依据这些信息回答用户；回答末尾可附上作品链接供用户查看）：\n[1] 作品甲（作者：作者甲）\n    类型：novel\n    简介：简介甲\n    链接：http://127.0.0.1:5173/works/7\n[2] 作品乙\n    类型：anime\n    链接：http://127.0.0.1:5173/works/8",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": ""
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：缺少必填参数 keyword（搜索关键词）。",
+    "legacy": "错误：缺少必填参数 keyword（搜索关键词）。",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": "作品甲"
+    },
+    "cfg": {
+      "site": "empty"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "站内没有匹配「作品甲」的作品。可以建议用户用 /安利 命令提交入库。",
+    "legacy": "站内没有匹配「作品甲」的作品。可以建议用户用 /安利 命令提交入库。",
+    "same": true
+  },
+  {
+    "tool": "site:search",
+    "args": {
+      "keyword": "作品甲"
+    },
+    "cfg": {
+      "site": "raise"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：搜索站内作品失败：后端 500。请如实告知用户暂时无法获取。",
+    "legacy": "错误：搜索站内作品失败：后端 500。请如实告知用户暂时无法获取。",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": "新作品"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已提交（待管理员审核）：《新作品》（ID=21） · 作者：作者丙 · 类型：novel · 简介：简介丙",
+    "legacy": "已提交（待管理员审核）：《新作品》（ID=21） · 作者：作者丙 · 类型：novel · 简介：简介丙",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": "新作品",
+      "author": "作者丙",
+      "type": "小说",
+      "summary": "简介丙",
+      "tags": "百合, 连载中",
+      "links": "起点=https://a.example, 豆瓣=https://b.example"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已提交（待管理员审核）：《新作品》（ID=21） · 作者：作者丙 · 类型：novel · 简介：简介丙",
+    "legacy": "已提交（待管理员审核）：《新作品》（ID=21） · 作者：作者丙 · 类型：novel · 简介：简介丙",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": "新作品"
+    },
+    "cfg": {
+      "submit": "published"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "已上传：《新作品》（ID=22） · 类型：movie · 详情：http://127.0.0.1:5173/works/22",
+    "legacy": "已上传：《新作品》（ID=22） · 类型：movie · 详情：http://127.0.0.1:5173/works/22",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": "新作品"
+    },
+    "cfg": {
+      "submit": "duplicate"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "站内已存在同名作品《已有作品》（ID=99），未重复入库。请告知用户可到 http://127.0.0.1:5173/works/99 标记支持。",
+    "legacy": "站内已存在同名作品《已有作品》（ID=99），未重复入库。请告知用户可到 http://127.0.0.1:5173/works/99 标记支持。",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": "新作品"
+    },
+    "cfg": {
+      "submit": "fail"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "上传失败：上传者 QQ 未在站点注册。请把这句话如实转告用户。",
+    "legacy": "上传失败：上传者 QQ 未在站点注册。请把这句话如实转告用户。",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": "新作品"
+    },
+    "cfg": {
+      "submit": "fail_nomessage"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "上传失败：未知原因。请把这句话如实转告用户。",
+    "legacy": "上传失败：未知原因。请把这句话如实转告用户。",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": "新作品"
+    },
+    "cfg": {
+      "submit": "raise"
+    },
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：上传作品失败：提交炸了。请如实告知用户暂时无法上传。",
+    "legacy": "错误：上传作品失败：提交炸了。请如实告知用户暂时无法上传。",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": ""
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": false,
+    "expect": "错误：缺少必填参数 title（作品标题）。",
+    "legacy": "错误：缺少必填参数 title（作品标题）。",
+    "same": true
+  },
+  {
+    "tool": "site:add",
+    "args": {
+      "title": "新作品"
+    },
+    "cfg": {},
+    "no_sink": false,
+    "no_user_qq": true,
+    "expect": "错误：无法识别当前调用者身份（QQ 上下文未注入），请让用户改用 /安利 命令手动提交。",
+    "legacy": "错误：无法识别当前调用者身份（QQ 上下文未注入），请让用户改用 /安利 命令手动提交。",
+    "same": true
+  }
+]

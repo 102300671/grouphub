@@ -9,7 +9,15 @@
 `nb run` 检测到本文件后以 bot.py 作为入口（systemd / Docker 均无需改动）。
 """
 import os
+import sys
 from pathlib import Path
+
+# 仓库根加入 sys.path：两端共享的 shared/aitools 放在仓库根，两端各自 import，
+# 不做 pip 安装 —— 部署时云端只需 git pull + 重启。
+# （plugins/_lib/aitools_host.py 里也做同样的事，两处都幂等。）
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import nonebot
 from loguru import logger as _loguru_logger

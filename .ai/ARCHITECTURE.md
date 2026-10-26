@@ -10,15 +10,23 @@
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  aitools-core（仓库内共享包，唯一实现）                  │
+│  shared/aitools（仓库内共享包，唯一实现）· M1 已落地       │
 │                                                          │
-│  registry    Package / Tool / ToolCall 定义与注册表       │
-│  protocol    textcodec（文本协议）  natcodec（原生 tool） │
-│  capability  按 model+api_base 判定走哪种信封             │
-│  loop        agent 循环：activate → 执行 → 回灌 → 收敛    │
-│  tools/      web:search  web:text  web:md  web:html       │
-│              web:screenshot  site:hot  site:search  site:add
-│  ports.py    ChatBackend / ImageSink / Store / SiteDAO    │
+│  __init__.py    对外唯一入口：build_agent()               │
+│  agent.py       Agent：持有注册表，跑一轮问答              │
+│  registry.py    Package / Tool / Param / ToolCall         │
+│                 ImageArtifact / Context / Registry         │
+│  prompt.py      date_hint / package_catalog / 工具手册     │
+│  protocol/      textcodec（文本协议）· names（名字映射）   │
+│  loop.py        agent 循环：activate → 执行 → 回灌 → 收敛   │
+│  tools/         web:search text md html screenshot         │
+│                 site:hot search add                       │
+│  imagesize.py   Range 拉文件头 → 宽高（PNG/JPEG/GIF/WebP） │
+│  ports.py       ChatBackend / ImageSink / SearchBackend   │
+│                 Renderer / SiteDAO                        │
+│  errors.py      错误文案规范（「错误：」前缀）              │
+│  logs.py        标准库 logging（共享包不依赖 nonebot）     │
+│  ── M3 才建 ── natcodec.py（原生 tool）· capability.py（判定）│
 └───────────────┬──────────────────────┬───────────────────┘
                 │                      │
         backend adapter         qqbot adapter
@@ -32,12 +40,19 @@
 
 工具只依赖抽象端口，两端各自注入实现：
 
-| port | backend 注入 | qqbot 注入 |
-|---|---|---|
-| `ChatBackend` | 现有 httpx 流式调用 | 现有 `_chat()` |
-| `ImageSink` | 存 `render_static/` 返回 URL | 富媒体直接发当前会话 |
-| `Store` | 进程内 storage/zfile 客户端 | 走 backend `/api` |
-| `SiteDAO` | 进程内 SQLAlchemy 查询 | 走 bot 内部接口 |
+| port | 生命周期 | backend 注入 | qqbot 注入 |
+|---|---|---|---|
+| `ChatBackend` | per-turn | 现有 httpx 流式调用 | 现有 `_chat()`（M1 已改成接受 `on_reasoning`） |
+| `ImageSink` | per-request | 存 `render_static/` 返回 URL | 富媒体直接发当前会话（`QQImageSink`） |
+| `SearchBackend` | 进程级 | SearXNG（地址取用户配置） | SearXNG（地址取 `/ai 配置`） |
+| `Renderer` | 进程级 | backend 自写 playwright | nonebot-plugin-htmlrender + playwright |
+| `SiteDAO` | 进程级 | 进程内 SQLAlchemy 查询 | 走 backend `/bot/works/*` |
+| `Store` | — | M4 才需要（图片落盘），M1 未建 | 同左 |
+
+**生命周期分层是 M1 落地的关键**：`ChatBackend` 必须 per-turn（QQ 端每个用户的
+base/key/model 不同，进程级注入会串号），`ImageSink` 必须 per-request（发到当前会话），
+其余三个是进程级、由 `build_agent()` 构造时注入。
+调用者身份（QQ 号 / 用户 id）不单独设端口，随 `Context` 传下去。
 
 `ImageSink` 的两种实现正是 M3 的落点：**工具产出统一的 `ImageArtifact`（含 bytes、相对路径、绝对 URL），由 sink 决定"发图"还是"给链接"**，工具本身不分支。
 
@@ -67,11 +82,24 @@ pkg:activate（仅 text 模式存在，原生模式不下发）
 
 ### 5. 交付：消息内容统一为 markdown
 
-按 DECISIONS D3，`AIMessage.content` 一律存 markdown，Web 渲染器与 QQ markdown 消息共用同一份文本。渲染图在 markdown 里就是 `![alt](绝对URL)`，两端各自决定呈现方式。XSS 防线：Web 端引入 `markdown-it` + `DOMPurify`（当前前端**没有任何** md 渲染器或 sanitizer，见 FACTS）。
+按 DECISIONS D3，`AIMessage.content` 一律存 markdown，Web 渲染器与 QQ markdown 消息共用同一份文本。渲染图在 markdown 里是 `![alt #宽px #高px](绝对URL)` —— **尺寸提示是必带的**（M0 实测：缺尺寸时手机端只显示 alt 文本，电脑端才 fallback），宽高来自 `shared/aitools/imagesize.py` 的探测。两端各自决定呈现方式。XSS 防线：Web 端引入 `markdown-it` + `DOMPurify`（当前前端**没有任何** md 渲染器或 sanitizer，见 FACTS）。
 
 ### 6. 同步：不复制消息，只借上下文
 
 按 DECISIONS D4，跨端历史只作为 prompt 上下文注入，不产生镜像消息、不由机器人代发用户消息。需要新增的是"读另一端历史"的取数函数与注入格式，消息时间线各端自治。
+
+### 7. M1 的落地方式（2026-10-26 落地，与上面的目标态有出入的地方）
+
+- **放在仓库根 `shared/`，不做 pip 安装**：两端把仓库根插进 `sys.path` 后 `from shared.aitools import build_agent`。
+  好处是云端部署仍只是 `git pull` + 重启，不用动两个 venv；代价是部署耦合从"装包"变成"路径引导"（见 RISKS R8）。
+- **注册表是实例**（`Registry`），`build_agent()` 造一个 `Agent` 持有它 —— 避免"QQ 端进程级注册"与
+  "backend 请求级构造工具表"两种模型打架。共享包内**没有全局可变状态**。
+- **工具 handler 签名统一为 `async (args, ctx) -> str`**：旧实现的 `set_current_user_qq` /
+  `set_current_image_sender` 两个 contextvar 被显式的 `Context` 取代（per-request 状态不再走全局）。
+- **参数说明是结构化的**（`Param`）而不是裸字符串：手册文案由 `Param` 渲染，`default` 只有一个来源，
+  手册与执行器在结构上就不可能漂移（漂移 1 的根治手段，详见 `CONTRACT.md`）。
+- **共享包不 import nonebot**：日志只用标准库 `logging`，QQ 端在 `plugins/_lib/aitools_host.py`
+  里做 loguru 桥接。
 
 ---
 
